@@ -1,6 +1,6 @@
 # vpcf-editor
 
-A desktop editor for `.vpcf` particle files. Edit colors across multiple files, find shared colors, and batch-edit raw text.
+A desktop .vpcf editor mainly made for Deadlock particle files. Edit colors across multiple files, find shared colors, and batch-edit raw text.
 
 ## Features
 
@@ -30,3 +30,6 @@ MIT
 ## Support
 
 [Paypal](https://paypal.me/yousvv) - [Ko-Fi](http://ko-fi.com/yousv)
+
+### Credits
+thanks for the-mrsir for their python application, took lots of inspiration from [VPCF-color-editor](https://github.com/the-mrsir/VPCF-color-editor) and this app could be considered a direct upgrade from their version. 
