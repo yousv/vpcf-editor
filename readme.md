@@ -5,10 +5,10 @@ A desktop .vpcf editor mainly made for Deadlock particle files. Edit colors acro
 ## Features
 
 - Color editor with hex input, alpha support, and native color picker
-- Shared colors tab - find and replace colors used across multiple files
+- Shared colors tab - find and replace colors used across multiple files with a matching threshold
 - Raw text editor with find/replace and batch operations
-- Saved color palette with drag-to-reorder
-- Auto-updater via GitHub Releases
+- Saved color palette
+- In-app update checking
 
 ## Install
 
