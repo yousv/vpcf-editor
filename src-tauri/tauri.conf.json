@@ -33,18 +33,6 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
-    ],
-    "createUpdaterArtifacts": false
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXkgRTJFMDA5QTRGMUQ3MzA0QQpSV1JLTUxmeFBBbmc0aGxqemZZSTZQMHNRKzdGSGg5a0ZZbHNQNVBnaHBDYjR1NjhNZnRvY2pvWgo=",
-      "endpoints": [
-        "https://github.com/yousv/vpcf-editor/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
+    ]
   }
 }

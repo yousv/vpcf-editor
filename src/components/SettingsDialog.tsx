@@ -1,7 +1,27 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { tauriCommands } from '../utils/tauriCommands';
 import { color, font, radius, shadow, size, space, zIndex } from '../theme';
 import { Button, Divider } from './Primitives';
+
+const VERSION_JSON_URL = 'https://raw.githubusercontent.com/yousv/vpcf-editor/main/version.json';
+const RELEASES_URL = 'https://github.com/yousv/vpcf-editor/releases';
+
+type UpdateCheckState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
+
+interface RemoteVersion {
+  version: string;
+  releaseUrl?: string;
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (v: string) => v.replace(/^v/, '').split('.').map(Number);
+  const [aMaj, aMin, aPat] = parse(a);
+  const [bMaj, bMin, bPat] = parse(b);
+  if (aMaj !== bMaj) return aMaj - bMaj;
+  if (aMin !== bMin) return aMin - bMin;
+  return aPat - bPat;
+}
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -10,12 +30,42 @@ interface SettingsDialogProps {
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const [appVersion, setAppVersion] = useState<string>('…');
+  const [updateState, setUpdateState] = useState<UpdateCheckState>('idle');
+  const [remoteVersion, setRemoteVersion] = useState<RemoteVersion | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion('unknown'));
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     if (isOpen) window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!isOpen) setUpdateState('idle');
+  }, [isOpen]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    setUpdateState('checking');
+    setRemoteVersion(null);
+    try {
+      const res = await fetch(VERSION_JSON_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('fetch failed');
+      const data: RemoteVersion = await res.json();
+      if (!data.version) throw new Error('invalid response');
+      setRemoteVersion(data);
+      setUpdateState(compareSemver(data.version, appVersion) > 0 ? 'available' : 'up-to-date');
+    } catch {
+      setUpdateState('error');
+    }
+  }, [appVersion]);
+
+  const handleOpenReleases = useCallback(async () => {
+    await tauriCommands.openUrl(remoteVersion?.releaseUrl ?? RELEASES_URL);
+  }, [remoteVersion]);
 
   const handleOpenGitHub = useCallback(async () => {
     await tauriCommands.openUrl('https://github.com/yousv/vpcf-editor');
@@ -60,7 +110,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               About
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: space.sm }}>
-              <InfoRow label="Version" value="0.9.0" />
+              <InfoRow label="Version" value={appVersion} />
               <InfoRow label="Author" value="yousv" />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: font.sizeSm, color: color.textMuted }}>Repository</span>
@@ -78,6 +128,41 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               </div>
             </div>
           </div>
+
+          <div>
+            <div style={{ fontSize: font.sizeMd, fontWeight: font.weightMedium, color: color.text, marginBottom: space.md }}>
+              Updates
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md }}>
+              <UpdateStatus state={updateState} remoteVersion={remoteVersion?.version ?? null} onOpenReleases={handleOpenReleases} />
+              <button
+                onClick={handleCheckUpdates}
+                disabled={updateState === 'checking'}
+                style={{
+                  flexShrink: 0,
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: font.sizeSm, fontWeight: font.weightMedium,
+                  color: updateState === 'checking' ? color.textMuted : color.text,
+                  background: color.surfaceHigh, border: `1px solid ${color.border}`,
+                  borderRadius: radius.md, padding: '6px 12px',
+                  cursor: updateState === 'checking' ? 'default' : 'pointer',
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                {updateState === 'checking' ? (
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{ animation: 'spin 1s linear infinite' }}>
+                    <circle cx="6.5" cy="6.5" r="5" stroke={color.textMuted} strokeWidth="1.4" strokeDasharray="20 12"/>
+                  </svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+                    <path d="M6.5 1.5A5 5 0 1 1 2 6.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                    <path d="M2 3.5V6.5H5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+                {updateState === 'checking' ? 'Checking…' : 'Check for Updates'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <Divider style={{ marginTop: space.xl, marginBottom: space.lg }} />
@@ -86,6 +171,64 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
           <Button variant="primary" height={size.buttonMd} width={96} onClick={onClose}>Close</Button>
         </div>
       </div>
+
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+};
+
+const UpdateStatus: React.FC<{
+  state: UpdateCheckState;
+  remoteVersion: string | null;
+  onOpenReleases: () => void;
+}> = ({ state, remoteVersion, onOpenReleases }) => {
+  if (state === 'idle') {
+    return <span style={{ fontSize: font.sizeSm, color: color.textFaint }}>—</span>;
+  }
+  if (state === 'checking') {
+    return <span style={{ fontSize: font.sizeSm, color: color.textMuted }}>Checking for updates…</span>;
+  }
+  if (state === 'up-to-date') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <circle cx="6.5" cy="6.5" r="5" stroke="#5a9a6a" strokeWidth="1.3"/>
+          <path d="M4 6.5l2 2 3-3" stroke="#5a9a6a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        <span style={{ fontSize: font.sizeSm, color: color.textMuted }}>You're up to date</span>
+      </div>
+    );
+  }
+  if (state === 'available') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+          <circle cx="6.5" cy="6.5" r="5" stroke="#c9a84c" strokeWidth="1.3"/>
+          <path d="M6.5 4v3M6.5 8.5v.5" stroke="#c9a84c" strokeWidth="1.3" strokeLinecap="round"/>
+        </svg>
+        <span style={{ fontSize: font.sizeSm, color: color.text }}>
+          v{remoteVersion} available —{' '}
+          <button
+            onClick={onOpenReleases}
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              color: color.text, fontSize: font.sizeSm,
+              textDecoration: 'underline', textDecorationColor: color.textFaint,
+            }}
+          >
+            View releases
+          </button>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
+        <circle cx="6.5" cy="6.5" r="5" stroke="#a85a5a" strokeWidth="1.3"/>
+        <path d="M4 4l5 5M9 4l-5 5" stroke="#a85a5a" strokeWidth="1.3" strokeLinecap="round"/>
+      </svg>
+      <span style={{ fontSize: font.sizeSm, color: color.textMuted }}>Could not check for updates</span>
     </div>
   );
 };

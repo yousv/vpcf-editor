@@ -45,12 +45,6 @@ export interface Toast {
   message: string;
 }
 
-export interface UpdateInfo {
-  version: string;
-  releaseUrl: string;
-  body: string;
-}
-
 export interface PendingColorChange {
   fieldIndex: number;
   newRgb: number[];

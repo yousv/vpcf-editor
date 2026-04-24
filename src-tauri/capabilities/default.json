@@ -5,8 +5,6 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "opener:allow-open-url",
-    "updater:default",
-    "process:allow-restart"
+    "opener:allow-open-url"
   ]
 }

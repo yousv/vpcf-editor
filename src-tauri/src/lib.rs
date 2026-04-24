@@ -8,7 +8,6 @@ use file_ops::{
     compute_shared_colors, find_vpcf_files, get_file_mtime, parse_color_fields, read_file,
     write_file, ColorChange, ColorField, FileData, LoadedFile, SavedFileResult, SharedColorGroup,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -21,14 +20,6 @@ pub struct AppStateInner {
 }
 
 pub struct AppState(pub Mutex<AppStateInner>);
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateInfo {
-    pub version: String,
-    pub release_url: String,
-    pub body: String,
-}
 
 fn lock_state<'a>(state: &'a State<'a, AppState>) -> Result<std::sync::MutexGuard<'a, AppStateInner>, String> {
     state.0.lock().map_err(|e| format!("State lock poisoned: {}", e))
@@ -234,26 +225,6 @@ fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
-        Ok(Some(update)) => Ok(Some(UpdateInfo {
-            version:     update.version.clone(),
-            release_url: update.download_url.to_string(),
-            body:        update.body.clone().unwrap_or_default(),
-        })),
-        Ok(None)  => Ok(None),
-        Err(_)    => Ok(None),
-    }
-}
-
-#[tauri::command]
-async fn restart_app(app: tauri::AppHandle) {
-    app.restart();
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let loaded_config = load_config();
@@ -266,8 +237,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .manage(AppState(Mutex::new(initial_state)))
         .invoke_handler(tauri::generate_handler![
             load_folder,
@@ -282,8 +251,6 @@ pub fn run() {
             save_config_cmd,
             open_folder_dialog,
             open_url,
-            check_for_updates,
-            restart_app,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

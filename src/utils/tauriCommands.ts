@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type {
   AppConfig, ColorChange, LoadedFile,
-  SavedFileResult, SharedColorGroup, UpdateInfo,
+  SavedFileResult, SharedColorGroup,
 } from '../types';
 
 export const tauriCommands = {
@@ -40,10 +40,4 @@ export const tauriCommands = {
 
   openUrl: (url: string): Promise<void> =>
     invoke('open_url', { url }),
-
-  checkForUpdates: (): Promise<UpdateInfo | null> =>
-    invoke('check_for_updates'),
-
-  restartApp: (): Promise<void> =>
-    invoke('restart_app'),
 };
