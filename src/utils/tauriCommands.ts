@@ -4,6 +4,11 @@ import type {
   SavedFileResult, SharedColorGroup,
 } from '../types';
 
+export interface RemoteVersion {
+  version: string;
+  releaseUrl?: string;
+}
+
 export const tauriCommands = {
   loadFolder: (path: string): Promise<LoadedFile[]> =>
     invoke('load_folder', { path }),
@@ -40,4 +45,7 @@ export const tauriCommands = {
 
   openUrl: (url: string): Promise<void> =>
     invoke('open_url', { url }),
+
+  checkForUpdates: (): Promise<RemoteVersion> =>
+    invoke('check_for_updates'),
 };

@@ -8,6 +8,7 @@ use file_ops::{
     compute_shared_colors, find_vpcf_files, get_file_mtime, parse_color_fields, read_file,
     write_file, ColorChange, ColorField, FileData, LoadedFile, SavedFileResult, SharedColorGroup,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
@@ -20,6 +21,13 @@ pub struct AppStateInner {
 }
 
 pub struct AppState(pub Mutex<AppStateInner>);
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteVersion {
+    pub version: String,
+    pub release_url: Option<String>,
+}
 
 fn lock_state<'a>(state: &'a State<'a, AppState>) -> Result<std::sync::MutexGuard<'a, AppStateInner>, String> {
     state.0.lock().map_err(|e| format!("State lock poisoned: {}", e))
@@ -225,6 +233,27 @@ fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn check_for_updates() -> Result<RemoteVersion, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("vpcf-editor")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let mut data = client
+        .get("https://api.github.com/repos/yousv/vpcf-editor/contents/version.json")
+        .header("Accept", "application/vnd.github.raw+json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<RemoteVersion>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    data.version = data.version.trim().to_string();
+    Ok(data)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let loaded_config = load_config();
@@ -251,6 +280,7 @@ pub fn run() {
             save_config_cmd,
             open_folder_dialog,
             open_url,
+            check_for_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

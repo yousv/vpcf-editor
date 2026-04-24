@@ -4,18 +4,19 @@ import { tauriCommands } from '../utils/tauriCommands';
 import { color, font, radius, shadow, size, space, zIndex } from '../theme';
 import { Button, Divider } from './Primitives';
 
-const VERSION_JSON_URL = 'https://raw.githubusercontent.com/yousv/vpcf-editor/main/version.json';
 const RELEASES_URL = 'https://github.com/yousv/vpcf-editor/releases';
 
 type UpdateCheckState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
 
-interface RemoteVersion {
-  version: string;
-  releaseUrl?: string;
-}
-
 function compareSemver(a: string, b: string): number {
-  const parse = (v: string) => v.replace(/^v/, '').split('.').map(Number);
+  const parse = (v: string) => {
+    const parts = v.replace(/^v/, '').split('.');
+    return [
+      Number(parts[0] ?? 0),
+      Number(parts[1] ?? 0),
+      Number(parts[2] ?? 0),
+    ];
+  };
   const [aMaj, aMin, aPat] = parse(a);
   const [bMaj, bMin, bPat] = parse(b);
   if (aMaj !== bMaj) return aMaj - bMaj;
@@ -32,7 +33,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const overlayRef = useRef<HTMLDivElement>(null);
   const [appVersion, setAppVersion] = useState<string>('…');
   const [updateState, setUpdateState] = useState<UpdateCheckState>('idle');
-  const [remoteVersion, setRemoteVersion] = useState<RemoteVersion | null>(null);
+  const [remoteVersion, setRemoteVersion] = useState<string | null>(null);
+  const [releaseUrl, setReleaseUrl] = useState<string | null>(null);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion('unknown'));
@@ -51,12 +53,11 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   const handleCheckUpdates = useCallback(async () => {
     setUpdateState('checking');
     setRemoteVersion(null);
+    setReleaseUrl(null);
     try {
-      const res = await fetch(VERSION_JSON_URL, { cache: 'no-store' });
-      if (!res.ok) throw new Error('fetch failed');
-      const data: RemoteVersion = await res.json();
-      if (!data.version) throw new Error('invalid response');
-      setRemoteVersion(data);
+      const data = await tauriCommands.checkForUpdates();
+      setRemoteVersion(data.version);
+      setReleaseUrl(data.releaseUrl ?? null);
       setUpdateState(compareSemver(data.version, appVersion) > 0 ? 'available' : 'up-to-date');
     } catch {
       setUpdateState('error');
@@ -64,8 +65,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
   }, [appVersion]);
 
   const handleOpenReleases = useCallback(async () => {
-    await tauriCommands.openUrl(remoteVersion?.releaseUrl ?? RELEASES_URL);
-  }, [remoteVersion]);
+    await tauriCommands.openUrl(releaseUrl ?? RELEASES_URL);
+  }, [releaseUrl]);
 
   const handleOpenGitHub = useCallback(async () => {
     await tauriCommands.openUrl('https://github.com/yousv/vpcf-editor');
@@ -134,7 +135,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
               Updates
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: space.md }}>
-              <UpdateStatus state={updateState} remoteVersion={remoteVersion?.version ?? null} onOpenReleases={handleOpenReleases} />
+              <UpdateStatus state={updateState} remoteVersion={remoteVersion} onOpenReleases={handleOpenReleases} />
               <button
                 onClick={handleCheckUpdates}
                 disabled={updateState === 'checking'}
