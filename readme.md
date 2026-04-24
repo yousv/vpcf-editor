@@ -12,7 +12,7 @@ A desktop editor for `.vpcf` particle files. Edit colors across multiple files, 
 
 ## Install
 
-Download the latest `.msi` from [Releases](https://github.com/yousv/vpcf-editor/releases).
+Download the latest `.exe` from [Releases](https://github.com/yousv/vpcf-editor/releases).
 
 ## Build
 
@@ -26,3 +26,7 @@ Requires [Node.js](https://nodejs.org) and [Rust](https://rustup.rs).
 ## License
 
 MIT
+
+## Support
+
+[Paypal](https://paypal.me/yousvv) - [Ko-Fi](http://ko-fi.com/yousv)
