@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
+import type { SharedPendingEdit } from '../store/appStore';
 import { tauriCommands } from '../utils/tauriCommands';
 import { color, font, radius, size, space } from '../theme';
 import { Badge, Button, Swatch } from './Primitives';
@@ -14,14 +15,26 @@ function buildRangeGradient(rgb: number[], threshold: number): string {
   return `linear-gradient(to right, ${rgbToHex(lowerBound)}, ${rgbToHex(rgb)}, ${rgbToHex(upperBound)})`;
 }
 
-export const SharedColorsTab: React.FC = () => {
-  const { config, persistConfig, loadedFiles, updateFileFields, pushToast, navigateToFileInEditor } = useAppStore();
+function groupKey(group: SharedColorGroup, idx: number): string {
+  return `${group.hex}-${idx}`;
+}
 
-  const [sharedGroups, setSharedGroups]         = useState<SharedColorGroup[]>([]);
-  const [isLoading, setIsLoading]               = useState(false);
+export const SharedColorsTab: React.FC = () => {
+  const {
+    config, persistConfig, loadedFiles, updateFileFields, pushToast,
+    navigateToFileInEditor, sharedPendingEdits, setSharedPendingEdit,
+    clearSharedPendingEdit, clearAllSharedPendingEdits,
+  } = useAppStore();
+
+  const [sharedGroups, setSharedGroups]             = useState<SharedColorGroup[]>([]);
+  const [isLoading, setIsLoading]                   = useState(false);
+  const [isApplyingAll, setIsApplyingAll]           = useState(false);
   const [selectedPaletteHex, setSelectedPaletteHex] = useState<string | null>(null);
-  const [localThreshold, setLocalThreshold]     = useState(config.colorMatchThreshold);
-  const debounceTimer                           = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [localThreshold, setLocalThreshold]         = useState(config.colorMatchThreshold);
+  const debounceTimer                               = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const pendingCount = Object.keys(sharedPendingEdits).length;
+  const hasUnsaved   = pendingCount > 0;
 
   const fetchSharedColors = useCallback(async (threshold: number) => {
     if (loadedFiles.length === 0) return;
@@ -48,6 +61,36 @@ export const SharedColorsTab: React.FC = () => {
       fetchSharedColors(newValue);
     }, 180);
   }, [config, fetchSharedColors, persistConfig]);
+
+  const handleGroupApplied = useCallback((key: string, results: any[]) => {
+    results.forEach((r) => updateFileFields(r.filename, r.fields));
+    clearSharedPendingEdit(key);
+    fetchSharedColors(localThreshold);
+    pushToast('success', `Updated ${results.length} file${results.length !== 1 ? 's' : ''}`);
+  }, [localThreshold, updateFileFields, clearSharedPendingEdit, fetchSharedColors, pushToast]);
+
+  const handleApplyAll = useCallback(async () => {
+    if (!hasUnsaved) return;
+    setIsApplyingAll(true);
+    let totalFiles = 0;
+    let failed = 0;
+    for (const [key, edit] of Object.entries(sharedPendingEdits)) {
+      const newRgb = hexToRgb(edit.newHex);
+      if (!newRgb) continue;
+      try {
+        const results = await tauriCommands.applySharedColor(edit.oldRgb, newRgb, localThreshold);
+        results.forEach((r) => updateFileFields(r.filename, r.fields));
+        totalFiles += results.length;
+        clearSharedPendingEdit(key);
+      } catch {
+        failed++;
+      }
+    }
+    await fetchSharedColors(localThreshold);
+    setIsApplyingAll(false);
+    if (failed > 0) pushToast('error', `${failed} group(s) failed to apply`);
+    else pushToast('success', `Applied all changes across ${totalFiles} file(s)`);
+  }, [sharedPendingEdits, localThreshold, hasUnsaved]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -110,22 +153,61 @@ export const SharedColorsTab: React.FC = () => {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-            {sharedGroups.map((group, idx) => (
-              <SharedColorCard
-                key={`${group.hex}-${idx}`}
-                group={group}
-                selectedPaletteHex={selectedPaletteHex}
-                threshold={localThreshold}
-                onNavigateToFile={navigateToFileInEditor}
-                onApplied={(results) => {
-                  results.forEach((r) => updateFileFields(r.filename, r.fields));
-                  fetchSharedColors(localThreshold);
-                  pushToast('success', `Updated ${results.length} file${results.length !== 1 ? 's' : ''}`);
-                }}
-                pushToast={pushToast}
-              />
-            ))}
+            {sharedGroups.map((group, idx) => {
+              const key = groupKey(group, idx);
+              return (
+                <SharedColorCard
+                  key={key}
+                  group={group}
+                  cardKey={key}
+                  selectedPaletteHex={selectedPaletteHex}
+                  threshold={localThreshold}
+                  pendingEdit={sharedPendingEdits[key]}
+                  onHexChange={(k, edit) => setSharedPendingEdit(k, edit)}
+                  onNavigateToFile={navigateToFileInEditor}
+                  onApplied={(results) => handleGroupApplied(key, results)}
+                  pushToast={pushToast}
+                />
+              );
+            })}
           </div>
+        )}
+      </div>
+
+      <div style={{
+        flexShrink: 0, background: color.surface, borderTop: `1px solid ${color.border}`,
+        padding: `0 ${space.xl}px`, display: 'flex', alignItems: 'center',
+        gap: space.md, height: size.bottomBarHeight,
+      }}>
+        <Button
+          variant="primary"
+          height={size.buttonMd}
+          width={172}
+          onClick={handleApplyAll}
+          disabled={!hasUnsaved || isApplyingAll}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M2 2h8l2 2v8H2V2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+            <path d="M4 2v3h6V2" stroke="currentColor" strokeWidth="1.3"/>
+            <path d="M4 8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          </svg>
+          {isApplyingAll ? 'Applying…' : 'Apply All'}
+        </Button>
+        <span style={{ fontSize: font.sizeSm, color: color.textFaint }}>
+          {hasUnsaved
+            ? `${pendingCount} group${pendingCount !== 1 ? 's' : ''} with pending changes`
+            : 'No pending changes'}
+        </span>
+        {hasUnsaved && (
+          <button
+            onClick={clearAllSharedPendingEdits}
+            style={{
+              marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: font.sizeXs, color: color.textFaint, padding: '4px 8px',
+            }}
+          >
+            Discard all
+          </button>
         )}
       </div>
     </div>
@@ -134,44 +216,64 @@ export const SharedColorsTab: React.FC = () => {
 
 interface SharedColorCardProps {
   group: SharedColorGroup;
+  cardKey: string;
   selectedPaletteHex: string | null;
   threshold: number;
+  pendingEdit: SharedPendingEdit | undefined;
+  onHexChange: (key: string, edit: SharedPendingEdit) => void;
   onNavigateToFile: (filename: string) => void;
   onApplied: (results: any[]) => void;
   pushToast: (type: any, message: string) => void;
 }
 
 const SharedColorCard: React.FC<SharedColorCardProps> = ({
-  group, selectedPaletteHex, threshold, onNavigateToFile, onApplied, pushToast,
+  group, cardKey, selectedPaletteHex, threshold, pendingEdit,
+  onHexChange, onNavigateToFile, onApplied, pushToast,
 }) => {
-  const [newHexInputValue, setNewHexInputValue] = useState(group.hex.toUpperCase());
-  const [previewHexColor, setPreviewHexColor]   = useState(group.hex.toLowerCase());
+  const initialHex = pendingEdit?.newHex ?? group.hex.toUpperCase();
+
+  const [newHexInputValue, setNewHexInputValue] = useState(initialHex);
+  const [previewHexColor, setPreviewHexColor]   = useState(pendingEdit?.newHex ?? group.hex.toLowerCase());
   const [isExpanded, setIsExpanded]             = useState(false);
   const [isApplying, setIsApplying]             = useState(false);
   const [showConfirm, setShowConfirm]           = useState(false);
   const pickerInputRef                          = useRef<HTMLInputElement>(null);
 
+  const isModified = previewHexColor.replace('#', '').toLowerCase() !== group.hex.replace('#', '').toLowerCase();
+
+  const notifyHexChange = useCallback((hex: string) => {
+    const candidate = hex.startsWith('#') ? hex : '#' + hex;
+    if (isValidHex(candidate)) {
+      onHexChange(cardKey, { newHex: candidate.toLowerCase(), oldRgb: group.rgb });
+    }
+  }, [cardKey, group.rgb, onHexChange]);
+
   const handleHexInputChange = useCallback((value: string) => {
     setNewHexInputValue(value);
     const candidate = value.startsWith('#') ? value : '#' + value;
-    if (isValidHex(candidate)) setPreviewHexColor(candidate.toLowerCase());
-  }, []);
+    if (isValidHex(candidate)) {
+      setPreviewHexColor(candidate.toLowerCase());
+      notifyHexChange(candidate);
+    }
+  }, [notifyHexChange]);
 
   const handleHexInputCommit = useCallback(() => {
     const candidate = newHexInputValue.startsWith('#') ? newHexInputValue : '#' + newHexInputValue;
     if (isValidHex(candidate)) {
       setPreviewHexColor(candidate.toLowerCase());
+      notifyHexChange(candidate);
     } else {
       setNewHexInputValue(group.hex.toUpperCase());
       setPreviewHexColor(group.hex.toLowerCase());
     }
-  }, [newHexInputValue, group.hex]);
+  }, [newHexInputValue, group.hex, notifyHexChange]);
 
   const handleUseSavedPaletteColor = useCallback(() => {
     if (!selectedPaletteHex) { pushToast('warning', 'Select a saved color from the palette first'); return; }
     setNewHexInputValue(selectedPaletteHex.toUpperCase());
     setPreviewHexColor(selectedPaletteHex.toLowerCase());
-  }, [selectedPaletteHex]);
+    notifyHexChange(selectedPaletteHex);
+  }, [selectedPaletteHex, notifyHexChange]);
 
   const doApply = useCallback(async () => {
     const candidate = previewHexColor.startsWith('#') ? previewHexColor : '#' + previewHexColor;
@@ -207,7 +309,11 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
   };
 
   return (
-    <div style={{ borderRadius: radius.lg, background: color.surfaceRaised, border: `1px solid ${color.border}`, overflow: 'hidden' }}>
+    <div style={{
+      borderRadius: radius.lg, background: color.surfaceRaised,
+      border: `1px solid ${isModified ? `${color.unsaved}50` : color.border}`,
+      overflow: 'hidden',
+    }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.md}px ${space.lg}px` }}>
         <div style={{ flexShrink: 0 }}>
           <Swatch hexColor={group.hex.toLowerCase()} swatchSize={size.swatchLg} />
@@ -225,6 +331,15 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
             <span style={{ fontSize: font.sizeSm, fontWeight: font.weightSemiBold, fontFamily: font.mono, color: color.text }}>
               {group.hex.toUpperCase()}
             </span>
+            {isModified && (
+              <span style={{
+                fontSize: font.sizeXs, color: color.unsaved, fontWeight: font.weightMedium,
+                background: `${color.unsaved}18`, border: `1px solid ${color.unsaved}40`,
+                borderRadius: 99, padding: '2px 9px', whiteSpace: 'nowrap',
+              }}>
+                unsaved
+              </span>
+            )}
             {group.fieldNames.map((fieldName) => (
               <Badge key={fieldName} badgeColor={color.textMuted}>{fieldName || 'gradient'}</Badge>
             ))}
@@ -260,7 +375,11 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
               ref={pickerInputRef}
               type="color"
               value={previewHexColor.startsWith('#') ? previewHexColor : '#' + previewHexColor}
-              onChange={(e) => { setPreviewHexColor(e.target.value); setNewHexInputValue(e.target.value.toUpperCase()); }}
+              onChange={(e) => {
+                setPreviewHexColor(e.target.value);
+                setNewHexInputValue(e.target.value.toUpperCase());
+                notifyHexChange(e.target.value);
+              }}
               style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
             />
             <Button height={size.buttonSm} width={46} onClick={() => pickerInputRef.current?.click()}>

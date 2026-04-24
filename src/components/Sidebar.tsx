@@ -130,8 +130,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
             <IconButton title="Settings" onClick={onSettingsOpen}>
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <circle cx="8" cy="8" r="2.5" stroke="currentColor" strokeWidth="1.4"/>
-                <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.93 2.93l1.41 1.41M11.66 11.66l1.41 1.41M2.93 13.07l1.41-1.41M11.66 4.34l1.41-1.41" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                <path d="M6.5 1.5h3l.5 2a5 5 0 0 1 1.2.7l2-.7 1.5 2.6-1.6 1.3a5 5 0 0 1 0 1.4l1.6 1.3-1.5 2.6-2-.7a5 5 0 0 1-1.2.7l-.5 2h-3l-.5-2a5 5 0 0 1-1.2-.7l-2 .7L1.3 10l1.6-1.3a5 5 0 0 1 0-1.4L1.3 6l1.5-2.6 2 .7a5 5 0 0 1 1.2-.7l.5-2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+                <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3"/>
               </svg>
             </IconButton>
           </div>

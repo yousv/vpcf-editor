@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useAppStore } from '../store/appStore';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { tauriCommands } from '../utils/tauriCommands';
 import { color, font, radius, shadow, size, space, zIndex } from '../theme';
 import { Button, Divider } from './Primitives';
@@ -10,30 +9,13 @@ interface SettingsDialogProps {
 }
 
 export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose }) => {
-  const { config, persistConfig, pushToast } = useAppStore();
   const overlayRef = useRef<HTMLDivElement>(null);
-
-  const [localThreshold, setLocalThreshold] = useState(config.colorMatchThreshold);
-
-  useEffect(() => {
-    if (isOpen) setLocalThreshold(config.colorMatchThreshold);
-  }, [isOpen, config.colorMatchThreshold]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     if (isOpen) window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
-
-  const handleSave = useCallback(async () => {
-    try {
-      await persistConfig({ ...config, colorMatchThreshold: localThreshold });
-      pushToast('success', 'Settings saved');
-    } catch {
-      pushToast('error', 'Failed to save settings');
-    }
-    onClose();
-  }, [config, localThreshold, persistConfig]);
 
   const handleOpenGitHub = useCallback(async () => {
     await tauriCommands.openUrl('https://github.com/yousv/vpcf-editor');
@@ -73,34 +55,6 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
         <Divider style={{ marginBottom: space.xl }} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: space.xl }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: space.md }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: font.sizeMd, fontWeight: font.weightMedium, color: color.text }}>
-                  Match Threshold
-                </div>
-                <div style={{ fontSize: font.sizeSm, color: color.textMuted, marginTop: 3 }}>
-                  Lower — more strict grouping &nbsp;·&nbsp; Higher — less strict
-                </div>
-              </div>
-              <span style={{ fontSize: font.sizeMd, fontFamily: font.mono, color: color.text, minWidth: 36, textAlign: 'right' }}>
-                {Math.round(localThreshold)}
-              </span>
-            </div>
-            <input
-              type="range" min={5} max={120} step={1}
-              value={localThreshold}
-              onChange={(e) => setLocalThreshold(Number(e.target.value))}
-              style={{ width: '100%', accentColor: color.text }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>5 — exact matches only</span>
-              <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>120 — broad matching</span>
-            </div>
-          </div>
-
-          <Divider />
-
           <div>
             <div style={{ fontSize: font.sizeMd, fontWeight: font.weightMedium, color: color.text, marginBottom: space.md }}>
               About
@@ -128,9 +82,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ isOpen, onClose 
 
         <Divider style={{ marginTop: space.xl, marginBottom: space.lg }} />
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: space.md }}>
-          <Button height={size.buttonMd} onClick={onClose}>Cancel</Button>
-          <Button variant="primary" height={size.buttonMd} width={96} onClick={handleSave}>Save</Button>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <Button variant="primary" height={size.buttonMd} width={96} onClick={onClose}>Close</Button>
         </div>
       </div>
     </div>

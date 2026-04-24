@@ -4,6 +4,8 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 html, body, #root {
@@ -46,6 +48,8 @@ button {
 input, textarea {
   font-family: inherit;
   outline: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 textarea {

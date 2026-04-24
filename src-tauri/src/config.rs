@@ -15,14 +15,14 @@ pub struct AppConfig {
     pub color_match_threshold: f64,
 }
 
-fn default_threshold() -> f64 { 25.0 }
+fn default_threshold() -> f64 { 30.0 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             folder_path: None,
             saved_colors: Vec::new(),
-            color_match_threshold: 25.0,
+            color_match_threshold: 30.0,
         }
     }
 }

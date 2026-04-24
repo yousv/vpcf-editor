@@ -19,6 +19,11 @@ function buildInitialEditorState(fields: ColorField[]): FileEditorState {
   return { fields, pendingChanges: {}, originalColors: buildOriginalColors(fields) };
 }
 
+export interface SharedPendingEdit {
+  newHex: string;
+  oldRgb: number[];
+}
+
 interface AppStore {
   config: AppConfig;
   setConfig: (config: AppConfig) => void;
@@ -43,6 +48,11 @@ interface AppStore {
   pushToUndoStack: (filename: string) => void;
   undoChange: (filename: string) => void;
 
+  sharedPendingEdits: Record<string, SharedPendingEdit>;
+  setSharedPendingEdit: (key: string, edit: SharedPendingEdit) => void;
+  clearSharedPendingEdit: (key: string) => void;
+  clearAllSharedPendingEdits: () => void;
+
   activeTab: TabName;
   setActiveTab: (tab: TabName) => void;
 
@@ -61,7 +71,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  config: { folderPath: null, savedColors: [], colorMatchThreshold: 25 },
+  config: { folderPath: null, savedColors: [], colorMatchThreshold: 30 },
   setConfig: (config) => set({ config }),
   persistConfig: async (config) => {
     set({ config });
@@ -167,6 +177,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       undoStacks: { ...undoStacks, [filename]: newStack },
     });
   },
+
+  sharedPendingEdits: {},
+  setSharedPendingEdit: (key, edit) =>
+    set((s) => ({ sharedPendingEdits: { ...s.sharedPendingEdits, [key]: edit } })),
+  clearSharedPendingEdit: (key) =>
+    set((s) => {
+      const next = { ...s.sharedPendingEdits };
+      delete next[key];
+      return { sharedPendingEdits: next };
+    }),
+  clearAllSharedPendingEdits: () => set({ sharedPendingEdits: {} }),
 
   activeTab: 'colorEditor',
   setActiveTab: (tab) => set({ activeTab: tab }),
