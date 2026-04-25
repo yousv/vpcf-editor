@@ -20,47 +20,25 @@ export const Button: React.FC<ButtonProps> = ({
   const [isHovered, setIsHovered] = useState(false);
   const [isPressed, setIsPressed] = useState(false);
 
-  const baseStyle: CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height,
-    width: width ?? 'auto',
-    padding: width ? 0 : '0 14px',
-    borderRadius: radius.md,
-    border: '1px solid',
-    fontSize: font.sizeSm,
-    fontWeight: font.weightMedium,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.38 : 1,
-    transition: transition.quick,
-    whiteSpace: 'nowrap' as const,
-    flexShrink: 0,
-    transform: isPressed && !disabled ? 'scale(0.97)' : 'scale(1)',
-    letterSpacing: '0.01em',
-    fontFamily: font.sans,
-  };
-
   const variantStyles: Record<string, CSSProperties> = {
     primary: {
-      background: isHovered ? '#e8e8e8' : color.white,
-      borderColor: isHovered ? '#e8e8e8' : color.white,
+      background: disabled ? '#888' : isPressed ? '#cccccc' : isHovered ? '#e8e8e8' : color.white,
+      borderColor: disabled ? '#888' : isPressed ? '#cccccc' : isHovered ? '#e8e8e8' : color.white,
       color: '#000000',
     },
     default: {
-      background: isHovered ? color.surfaceActive : color.surfaceRaised,
+      background: isPressed ? color.surfaceHigh : isHovered ? color.surfaceActive : color.surfaceRaised,
       borderColor: isHovered ? color.borderStrong : color.border,
       color: isHovered ? color.text : color.textMuted,
     },
     ghost: {
-      background: isHovered ? color.surfaceActive : 'transparent',
+      background: isPressed ? color.surfaceActive : isHovered ? color.surfaceRaised : 'transparent',
       borderColor: 'transparent',
       color: isHovered ? color.text : color.textMuted,
     },
     danger: {
-      background: isHovered ? color.errorDark : color.error,
-      borderColor: isHovered ? color.errorDark : color.error,
+      background: isPressed ? '#b91c1c' : isHovered ? color.errorDark : color.error,
+      borderColor: isPressed ? '#b91c1c' : isHovered ? color.errorDark : color.error,
       color: '#ffffff',
     },
   };
@@ -71,7 +49,23 @@ export const Button: React.FC<ButtonProps> = ({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      style={{ ...baseStyle, ...variantStyles[variant], ...style }}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        gap: 6, height, width: width ?? 'auto',
+        padding: width ? 0 : '0 14px',
+        borderRadius: radius.md, border: '1px solid',
+        fontSize: font.sizeSm, fontWeight: font.weightMedium,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.38 : 1,
+        transition: transition.quick,
+        whiteSpace: 'nowrap' as const,
+        flexShrink: 0,
+        transform: isPressed && !disabled ? 'scale(0.965)' : 'scale(1)',
+        letterSpacing: '0.01em',
+        fontFamily: font.sans,
+        ...variantStyles[variant],
+        ...style,
+      }}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
       onMouseDown={() => setIsPressed(true)}
@@ -95,28 +89,28 @@ export const IconButton: React.FC<IconButtonProps> = ({
   children, onClick, title, disabled, size: btnSize = 28, style,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [isPressed, setIsPressed] = useState(false);
   return (
     <button
       title={title}
       onClick={onClick}
       disabled={disabled}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
+      onMouseDown={() => setIsPressed(true)}
+      onMouseUp={() => setIsPressed(false)}
       style={{
-        width: btnSize,
-        height: btnSize,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: isHovered && !disabled ? color.surfaceActive : 'transparent',
+        width: btnSize, height: btnSize,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: isPressed ? color.surfaceHigh : isHovered && !disabled ? color.surfaceActive : 'transparent',
         border: `1px solid ${isHovered && !disabled ? color.border : 'transparent'}`,
         borderRadius: radius.md,
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.3 : 1,
         transition: transition.quick,
-        padding: 0,
-        flexShrink: 0,
-        color: color.textMuted,
+        transform: isPressed && !disabled ? 'scale(0.93)' : 'scale(1)',
+        padding: 0, flexShrink: 0,
+        color: isHovered ? color.text : color.textMuted,
         ...style,
       }}
     >
@@ -156,13 +150,10 @@ export const Input: React.FC<InputProps> = ({
       autoFocus={autoFocus}
       maxLength={maxLength}
       style={{
-        height,
-        width: width ?? '100%',
-        padding: '0 12px',
+        height, width: width ?? '100%', padding: '0 12px',
         background: color.surfaceActive,
         border: `1px solid ${isFocused ? '#444444' : color.border}`,
-        borderRadius: radius.md,
-        color: color.text,
+        borderRadius: radius.md, color: color.text,
         fontSize: font.sizeSm,
         fontFamily: mono ? font.mono : font.sans,
         transition: transition.quick,
@@ -184,16 +175,12 @@ interface BadgeProps {
 
 export const Badge: React.FC<BadgeProps> = ({ children, badgeColor = color.textMuted }) => (
   <span style={{
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '2px 8px',
-    borderRadius: radius.sm,
-    background: `${badgeColor}14`,
-    border: `1px solid ${badgeColor}30`,
-    fontSize: font.sizeXs,
-    fontWeight: font.weightMedium,
-    color: badgeColor,
-    whiteSpace: 'nowrap' as const,
+    display: 'inline-flex', alignItems: 'center',
+    padding: '2px 8px', borderRadius: radius.sm,
+    background: `${badgeColor}12`,
+    border: `1px solid ${badgeColor}28`,
+    fontSize: font.sizeXs, fontWeight: font.weightMedium,
+    color: badgeColor, whiteSpace: 'nowrap' as const,
     letterSpacing: '0.01em',
   }}>
     {children}
@@ -213,22 +200,23 @@ export const Swatch: React.FC<SwatchProps> = ({
   hexColor, swatchSize = size.swatchMd, onClick, selected, title, style,
 }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [isPressed, setIsPressed] = useState(false);
   return (
     <div
       title={title ?? hexColor}
       onClick={onClick}
       onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseLeave={() => { setIsHovered(false); setIsPressed(false); }}
+      onMouseDown={() => setIsPressed(true)}
+      onMouseUp={() => setIsPressed(false)}
       style={{
-        width: swatchSize,
-        height: swatchSize,
-        borderRadius: radius.md,
-        background: hexColor,
-        border: `1.5px solid ${selected ? color.white : isHovered && onClick ? color.borderStrong : color.border}`,
+        width: swatchSize, height: swatchSize,
+        borderRadius: radius.md, background: hexColor,
+        border: `1.5px solid ${selected ? color.white : isHovered && onClick ? '#555555' : color.border}`,
         cursor: onClick ? 'pointer' : 'default',
-        flexShrink: 0,
-        transition: transition.quick,
-        boxShadow: selected ? '0 0 0 2px rgba(255,255,255,0.15)' : 'none',
+        flexShrink: 0, transition: transition.quick,
+        transform: isPressed && onClick ? 'scale(0.9)' : isHovered && onClick ? 'scale(1.06)' : 'scale(1)',
+        boxShadow: selected ? '0 0 0 2px rgba(255,255,255,0.18)' : 'none',
         ...style,
       }}
     />
@@ -239,12 +227,9 @@ export const SectionLabel: React.FC<{ children: ReactNode; style?: CSSProperties
   children, style,
 }) => (
   <span style={{
-    fontSize: font.sizeXs,
-    fontWeight: font.weightMedium,
-    color: color.textFaint,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.1em',
-    ...style,
+    fontSize: font.sizeXs, fontWeight: font.weightMedium,
+    color: color.textFaint, textTransform: 'uppercase' as const,
+    letterSpacing: '0.1em', ...style,
   }}>
     {children}
   </span>

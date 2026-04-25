@@ -10,11 +10,6 @@ pub fn parse_color_string(raw_value: &str) -> Vec<u8> {
         .collect()
 }
 
-pub fn color_list_to_string(rgb_channels: &[u8]) -> String {
-    let channel_strings: Vec<String> = rgb_channels.iter().map(|v| v.to_string()).collect();
-    format!("[ {} ]", channel_strings.join(", "))
-}
-
 pub fn rgb_to_hex(rgb_channels: &[u8]) -> String {
     if rgb_channels.len() >= 3 {
         format!("#{:02x}{:02x}{:02x}", rgb_channels[0], rgb_channels[1], rgb_channels[2])

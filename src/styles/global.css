@@ -20,30 +20,14 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: #2a2a2a;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
-}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e1e1e; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2e2e2e; }
 
-::selection {
-  background: rgba(99, 102, 241, 0.25);
-  color: #ededed;
-}
+::selection { background: rgba(99,102,241,0.25); color: #ededed; }
 
-button {
-  font-family: inherit;
-  cursor: pointer;
-}
+button { font-family: inherit; cursor: pointer; }
 
 input, textarea {
   font-family: inherit;
@@ -52,29 +36,60 @@ input, textarea {
   -webkit-user-select: text;
 }
 
-textarea {
-  resize: none;
-}
+textarea { resize: none; }
 
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
+  height: 3px;
   border-radius: 2px;
-  background: #222222;
+  background: #1e1e1e;
   cursor: pointer;
+  transition: background 0.1s ease;
 }
+
+input[type="range"]:hover { background: #2a2a2a; }
 
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #ededed;
   cursor: pointer;
-  transition: background 0.08s ease;
+  transition: background 0.08s ease, transform 0.08s ease;
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
   background: #ffffff;
+  transform: scale(1.15);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+}
+
+input[type="color"] {
+  -webkit-appearance: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
 }

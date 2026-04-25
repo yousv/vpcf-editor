@@ -11,20 +11,16 @@ interface SavedColorsPaletteProps {
 }
 
 interface ContextMenuState {
-  x: number;
-  y: number;
-  targetHex: string;
-  targetIndex: number;
+  x: number; y: number; targetHex: string; targetIndex: number;
 }
 
-export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
-  onColorSelect, selectedHex,
-}) => {
+export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({ onColorSelect, selectedHex }) => {
   const { config, persistConfig } = useAppStore();
   const savedColors = config.savedColors;
 
-  const [draggedIndex, setDraggedIndex]   = useState<number | null>(null);
+  const draggedIndexRef               = useRef<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [draggedIndex, setDraggedIndex]   = useState<number | null>(null);
   const [contextMenu, setContextMenu]     = useState<ContextMenuState | null>(null);
   const [editingIndex, setEditingIndex]   = useState<number | null>(null);
   const [editValue, setEditValue]         = useState('');
@@ -39,8 +35,10 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
   }, [savedColors, persistColors]);
 
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    draggedIndexRef.current = index;
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
@@ -49,21 +47,26 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
     setDragOverIndex(index);
   }, []);
 
-  const handleDrop = useCallback((dropIndex: number) => {
-    if (draggedIndex === null || draggedIndex === dropIndex) {
+  const handleDrop = useCallback((e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    const fromIndex = draggedIndexRef.current;
+    if (fromIndex === null || fromIndex === dropIndex) {
       setDraggedIndex(null);
       setDragOverIndex(null);
+      draggedIndexRef.current = null;
       return;
     }
     const reordered = [...savedColors];
-    const [movedItem] = reordered.splice(draggedIndex, 1);
-    reordered.splice(dropIndex, 0, movedItem);
+    const [moved]   = reordered.splice(fromIndex, 1);
+    reordered.splice(dropIndex, 0, moved);
+    draggedIndexRef.current = null;
     setDraggedIndex(null);
     setDragOverIndex(null);
     persistColors(reordered);
-  }, [draggedIndex, savedColors, persistColors]);
+  }, [savedColors, persistColors]);
 
   const handleDragEnd = useCallback(() => {
+    draggedIndexRef.current = null;
     setDraggedIndex(null);
     setDragOverIndex(null);
   }, []);
@@ -97,8 +100,8 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
   }, [editingIndex, editValue, savedColors, persistColors]);
 
   const getContextMenuItems = useCallback((hexColor: string, index: number): ContextMenuItem[] => [
-    { label: 'Edit',      onClick: () => startEdit(index, hexColor) },
-    { label: 'Copy Hex',  onClick: () => navigator.clipboard.writeText(hexColor) },
+    { label: 'Edit',     onClick: () => startEdit(index, hexColor) },
+    { label: 'Copy Hex', onClick: () => navigator.clipboard.writeText(hexColor) },
     { separator: true } as ContextMenuItem,
     { label: 'Remove', danger: true, onClick: () => handleRemove(hexColor) },
   ], [startEdit, handleRemove]);
@@ -106,10 +109,10 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
   if (savedColors.length === 0) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: space.md, height: size.swatchSm }}>
-        <span style={{ fontSize: font.sizeXs, color: color.textFaint, textTransform: 'uppercase' as const, letterSpacing: '0.08em' }}>
+        <span style={{ fontSize: font.sizeXs, color: color.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Saved
         </span>
-        <span style={{ fontSize: font.sizeSm, color: color.textFaint }}>None</span>
+        <span style={{ fontSize: font.sizeSm, color: color.textFaint }}>None saved yet</span>
       </div>
     );
   }
@@ -117,7 +120,7 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexWrap: 'wrap', minHeight: size.swatchSm }}>
-        <span style={{ fontSize: font.sizeXs, color: color.textFaint, textTransform: 'uppercase' as const, letterSpacing: '0.08em', flexShrink: 0 }}>
+        <span style={{ fontSize: font.sizeXs, color: color.textFaint, textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0 }}>
           Saved
         </span>
         {savedColors.map((hexColor, index) => {
@@ -154,17 +157,17 @@ export const SavedColorsPalette: React.FC<SavedColorsPaletteProps> = ({
               draggable
               onDragStart={(e) => handleDragStart(e, index)}
               onDragOver={(e) => handleDragOver(e, index)}
-              onDrop={() => handleDrop(index)}
+              onDrop={(e) => handleDrop(e, index)}
               onDragEnd={handleDragEnd}
               onContextMenu={(e) => handleContextMenu(e, hexColor, index)}
               style={{
-                opacity: isDragged ? 0.25 : 1,
-                outline: isDragOver ? `2px dashed ${color.borderStrong}` : 'none',
+                opacity:     isDragged ? 0.2 : 1,
+                outline:     isDragOver ? `2px dashed ${color.borderStrong}` : 'none',
                 outlineOffset: 3,
                 borderRadius: radius.md,
-                transition: transition.quick,
-                cursor: 'grab',
-                flexShrink: 0,
+                transition:  transition.quick,
+                cursor:      'grab',
+                flexShrink:  0,
               }}
             >
               <Swatch

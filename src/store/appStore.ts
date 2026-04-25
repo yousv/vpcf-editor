@@ -68,6 +68,8 @@ interface AppStore {
   toasts: Toast[];
   pushToast: (type: ToastType, message: string) => void;
   dismissToast: (id: string) => void;
+
+  closeFolder: () => Promise<void>;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -90,7 +92,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       f.filename.toLowerCase().includes(fileSearchQuery.toLowerCase())
     );
     if (filtered.length === 0) return;
-    const cur = filtered.findIndex(f => f.filename === selectedFilename);
+    const cur  = filtered.findIndex(f => f.filename === selectedFilename);
     const next = cur === -1
       ? (direction === 1 ? 0 : filtered.length - 1)
       : (cur + direction + filtered.length) % filtered.length;
@@ -159,7 +161,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { fileEditorStates, undoStacks } = get();
     const es = fileEditorStates[filename];
     if (!es) return;
-    const stack = undoStacks[filename] ?? [];
+    const stack   = undoStacks[filename] ?? [];
     const trimmed = stack.length >= MAX_UNDO ? stack.slice(1) : stack;
     set({ undoStacks: { ...undoStacks, [filename]: [...trimmed, { ...es.pendingChanges }] } });
   },
@@ -168,13 +170,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { fileEditorStates, undoStacks } = get();
     const stack = undoStacks[filename];
     if (!stack || stack.length === 0) return;
-    const prev = stack[stack.length - 1];
+    const prev     = stack[stack.length - 1];
     const newStack = stack.slice(0, -1);
-    const es = fileEditorStates[filename];
+    const es       = fileEditorStates[filename];
     if (!es) return;
     set({
       fileEditorStates: { ...fileEditorStates, [filename]: { ...es, pendingChanges: prev } },
-      undoStacks: { ...undoStacks, [filename]: newStack },
+      undoStacks:       { ...undoStacks, [filename]: newStack },
     });
   },
 
@@ -203,16 +205,29 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   toasts: [],
   pushToast: (type, message) => {
-    const id = `toast-${Date.now()}-${Math.random()}`;
+    const id    = `toast-${Date.now()}-${Math.random()}`;
     const toast: Toast = { id, type, message };
     set((s) => ({ toasts: [...s.toasts, toast] }));
     setTimeout(() => get().dismissToast(id), 3800);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  closeFolder: async () => {
+    const { config, persistConfig } = get();
+    set({
+      loadedFiles:        [],
+      selectedFilename:   null,
+      fileEditorStates:   {},
+      undoStacks:         {},
+      sharedPendingEdits: {},
+      fileSearchQuery:    '',
+    });
+    await persistConfig({ ...config, folderPath: null });
+  },
 }));
 
 export function useFilteredFiles() {
-  const loadedFiles = useAppStore((s) => s.loadedFiles);
+  const loadedFiles    = useAppStore((s) => s.loadedFiles);
   const fileSearchQuery = useAppStore((s) => s.fileSearchQuery);
   return useMemo(
     () => loadedFiles.filter((f) =>

@@ -1,18 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store/appStore';
-import type { SharedPendingEdit } from '../store/appStore';
 import { tauriCommands } from '../utils/tauriCommands';
-import { color, font, radius, size, space } from '../theme';
+import { color, font, radius, size, space, transition } from '../theme';
 import { Badge, Button, Swatch } from './Primitives';
 import { SavedColorsPalette } from './SavedColorsPalette';
 import { hexToRgb, isValidHex, rgbToHex } from '../utils/colorUtils';
 import type { SharedColorGroup } from '../types';
 
 function buildRangeGradient(rgb: number[], threshold: number): string {
-  const channelDelta = Math.round(threshold / Math.sqrt(3));
-  const lowerBound   = rgb.map(v => Math.max(0, v - channelDelta));
-  const upperBound   = rgb.map(v => Math.min(255, v + channelDelta));
-  return `linear-gradient(to right, ${rgbToHex(lowerBound)}, ${rgbToHex(rgb)}, ${rgbToHex(upperBound)})`;
+  const d = Math.round(threshold / Math.sqrt(3));
+  const lo = rgb.map(v => Math.max(0, v - d));
+  const hi = rgb.map(v => Math.min(255, v + d));
+  return `linear-gradient(to right, ${rgbToHex(lo)}, ${rgbToHex(rgb)}, ${rgbToHex(hi)})`;
 }
 
 function groupKey(group: SharedColorGroup, idx: number): string {
@@ -26,12 +25,12 @@ export const SharedColorsTab: React.FC = () => {
     clearSharedPendingEdit, clearAllSharedPendingEdits,
   } = useAppStore();
 
-  const [sharedGroups, setSharedGroups]             = useState<SharedColorGroup[]>([]);
-  const [isLoading, setIsLoading]                   = useState(false);
-  const [isApplyingAll, setIsApplyingAll]           = useState(false);
-  const [selectedPaletteHex, setSelectedPaletteHex] = useState<string | null>(null);
-  const [localThreshold, setLocalThreshold]         = useState(config.colorMatchThreshold);
-  const debounceTimer                               = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sharedGroups, setSharedGroups]     = useState<SharedColorGroup[]>([]);
+  const [isLoading, setIsLoading]           = useState(false);
+  const [isApplyingAll, setIsApplyingAll]   = useState(false);
+  const [localThreshold, setLocalThreshold] = useState(config.colorMatchThreshold);
+  const [activeGroupIndex, setActiveGroupIndex] = useState<number | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pendingCount = Object.keys(sharedPendingEdits).length;
   const hasUnsaved   = pendingCount > 0;
@@ -42,16 +41,15 @@ export const SharedColorsTab: React.FC = () => {
     try {
       const groups = await tauriCommands.computeSharedColors(threshold);
       setSharedGroups(groups);
+      setActiveGroupIndex(null);
     } catch (err) {
       pushToast('error', `Failed to compute shared colors: ${err}`);
     } finally {
       setIsLoading(false);
     }
-  }, [loadedFiles.length]);
+  }, [loadedFiles.length, pushToast]);
 
-  useEffect(() => {
-    fetchSharedColors(config.colorMatchThreshold);
-  }, [loadedFiles.length]);
+  useEffect(() => { fetchSharedColors(config.colorMatchThreshold); }, [loadedFiles.length]);
 
   const handleThresholdChange = useCallback((newValue: number) => {
     setLocalThreshold(newValue);
@@ -72,8 +70,7 @@ export const SharedColorsTab: React.FC = () => {
   const handleApplyAll = useCallback(async () => {
     if (!hasUnsaved) return;
     setIsApplyingAll(true);
-    let totalFiles = 0;
-    let failed = 0;
+    let totalFiles = 0, failed = 0;
     for (const [key, edit] of Object.entries(sharedPendingEdits)) {
       const newRgb = hexToRgb(edit.newHex);
       if (!newRgb) continue;
@@ -82,15 +79,21 @@ export const SharedColorsTab: React.FC = () => {
         results.forEach((r) => updateFileFields(r.filename, r.fields));
         totalFiles += results.length;
         clearSharedPendingEdit(key);
-      } catch {
-        failed++;
-      }
+      } catch { failed++; }
     }
     await fetchSharedColors(localThreshold);
     setIsApplyingAll(false);
     if (failed > 0) pushToast('error', `${failed} group(s) failed to apply`);
     else pushToast('success', `Applied all changes across ${totalFiles} file(s)`);
-  }, [sharedPendingEdits, localThreshold, hasUnsaved]);
+  }, [sharedPendingEdits, localThreshold, hasUnsaved, updateFileFields, clearSharedPendingEdit, fetchSharedColors, pushToast]);
+
+  const handlePaletteColorSelect = useCallback((hex: string) => {
+    if (activeGroupIndex !== null && sharedGroups[activeGroupIndex]) {
+      const group = sharedGroups[activeGroupIndex];
+      const key   = groupKey(group, activeGroupIndex);
+      setSharedPendingEdit(key, { newHex: hex.toLowerCase(), oldRgb: group.rgb });
+    }
+  }, [activeGroupIndex, sharedGroups, setSharedPendingEdit]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
@@ -99,7 +102,15 @@ export const SharedColorsTab: React.FC = () => {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         gap: space.md, flexShrink: 0, borderBottom: `1px solid ${color.border}`, minHeight: 58,
       }}>
-        <SavedColorsPalette onColorSelect={setSelectedPaletteHex} selectedHex={selectedPaletteHex} />
+        <SavedColorsPalette
+          onColorSelect={handlePaletteColorSelect}
+          selectedHex={activeGroupIndex !== null ? sharedGroups[activeGroupIndex]?.hex ?? null : null}
+        />
+        {activeGroupIndex !== null && (
+          <span style={{ fontSize: font.sizeXs, color: color.textFaint, flexShrink: 0, whiteSpace: 'nowrap' }}>
+            Click a saved color to apply
+          </span>
+        )}
       </div>
 
       <div style={{
@@ -121,8 +132,8 @@ export const SharedColorsTab: React.FC = () => {
             style={{ width: '100%', accentColor: color.text }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>Lower — more strict grouping</span>
-            <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>Higher — less strict grouping</span>
+            <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>Stricter</span>
+            <span style={{ fontSize: font.sizeXs, color: color.textFaint }}>Looser</span>
           </div>
         </div>
 
@@ -144,15 +155,15 @@ export const SharedColorsTab: React.FC = () => {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: `${space.sm}px ${space.md}px` }}>
         {isLoading ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted, fontSize: font.sizeMd }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted }}>
             Computing…
           </div>
         ) : sharedGroups.length === 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted, fontSize: font.sizeMd }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted }}>
             {loadedFiles.length === 0 ? 'Load a folder first' : 'No shared colors found'}
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {sharedGroups.map((group, idx) => {
               const key = groupKey(group, idx);
               return (
@@ -160,8 +171,9 @@ export const SharedColorsTab: React.FC = () => {
                   key={key}
                   group={group}
                   cardKey={key}
-                  selectedPaletteHex={selectedPaletteHex}
                   threshold={localThreshold}
+                  isActive={activeGroupIndex === idx}
+                  onActivate={() => setActiveGroupIndex(prev => prev === idx ? null : idx)}
                   pendingEdit={sharedPendingEdits[key]}
                   onHexChange={(k, edit) => setSharedPendingEdit(k, edit)}
                   onNavigateToFile={navigateToFileInEditor}
@@ -204,7 +216,10 @@ export const SharedColorsTab: React.FC = () => {
             style={{
               marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
               fontSize: font.sizeXs, color: color.textFaint, padding: '4px 8px',
+              borderRadius: radius.md, transition: transition.quick,
             }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = color.textMuted)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = color.textFaint)}
           >
             Discard all
           </button>
@@ -217,70 +232,63 @@ export const SharedColorsTab: React.FC = () => {
 interface SharedColorCardProps {
   group: SharedColorGroup;
   cardKey: string;
-  selectedPaletteHex: string | null;
   threshold: number;
-  pendingEdit: SharedPendingEdit | undefined;
-  onHexChange: (key: string, edit: SharedPendingEdit) => void;
+  isActive: boolean;
+  onActivate: () => void;
+  pendingEdit: { newHex: string; oldRgb: number[] } | undefined;
+  onHexChange: (key: string, edit: { newHex: string; oldRgb: number[] }) => void;
   onNavigateToFile: (filename: string) => void;
   onApplied: (results: any[]) => void;
   pushToast: (type: any, message: string) => void;
 }
 
 const SharedColorCard: React.FC<SharedColorCardProps> = ({
-  group, cardKey, selectedPaletteHex, threshold, pendingEdit,
+  group, cardKey, threshold, isActive, onActivate, pendingEdit,
   onHexChange, onNavigateToFile, onApplied, pushToast,
 }) => {
-  const initialHex = pendingEdit?.newHex ?? group.hex.toUpperCase();
+  const [newHexInput, setNewHexInput]     = useState(pendingEdit?.newHex?.toUpperCase() ?? group.hex.toUpperCase());
+  const [previewHex, setPreviewHex]       = useState(pendingEdit?.newHex ?? group.hex.toLowerCase());
+  const [isExpanded, setIsExpanded]       = useState(false);
+  const [isApplying, setIsApplying]       = useState(false);
+  const [showConfirm, setShowConfirm]     = useState(false);
+  const [isHovered, setIsHovered]         = useState(false);
+  const pickerInputRef                    = useRef<HTMLInputElement>(null);
 
-  const [newHexInputValue, setNewHexInputValue] = useState(initialHex);
-  const [previewHexColor, setPreviewHexColor]   = useState(pendingEdit?.newHex ?? group.hex.toLowerCase());
-  const [isExpanded, setIsExpanded]             = useState(false);
-  const [isApplying, setIsApplying]             = useState(false);
-  const [showConfirm, setShowConfirm]           = useState(false);
-  const pickerInputRef                          = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (pendingEdit?.newHex) {
+      setNewHexInput(pendingEdit.newHex.toUpperCase());
+      setPreviewHex(pendingEdit.newHex.toLowerCase());
+    } else {
+      setNewHexInput(group.hex.toUpperCase());
+      setPreviewHex(group.hex.toLowerCase());
+    }
+  }, [pendingEdit?.newHex, group.hex]);
 
-  const isModified = previewHexColor.replace('#', '').toLowerCase() !== group.hex.replace('#', '').toLowerCase();
+  const isModified = previewHex.replace('#', '').toLowerCase() !== group.hex.replace('#', '').toLowerCase();
 
   const notifyHexChange = useCallback((hex: string) => {
-    const candidate = hex.startsWith('#') ? hex : '#' + hex;
-    if (isValidHex(candidate)) {
-      onHexChange(cardKey, { newHex: candidate.toLowerCase(), oldRgb: group.rgb });
-    }
+    const c = hex.startsWith('#') ? hex : '#' + hex;
+    if (isValidHex(c)) onHexChange(cardKey, { newHex: c.toLowerCase(), oldRgb: group.rgb });
   }, [cardKey, group.rgb, onHexChange]);
 
   const handleHexInputChange = useCallback((value: string) => {
-    setNewHexInputValue(value);
-    const candidate = value.startsWith('#') ? value : '#' + value;
-    if (isValidHex(candidate)) {
-      setPreviewHexColor(candidate.toLowerCase());
-      notifyHexChange(candidate);
-    }
+    setNewHexInput(value);
+    const c = value.startsWith('#') ? value : '#' + value;
+    if (isValidHex(c)) { setPreviewHex(c.toLowerCase()); notifyHexChange(c); }
   }, [notifyHexChange]);
 
   const handleHexInputCommit = useCallback(() => {
-    const candidate = newHexInputValue.startsWith('#') ? newHexInputValue : '#' + newHexInputValue;
-    if (isValidHex(candidate)) {
-      setPreviewHexColor(candidate.toLowerCase());
-      notifyHexChange(candidate);
-    } else {
-      setNewHexInputValue(group.hex.toUpperCase());
-      setPreviewHexColor(group.hex.toLowerCase());
-    }
-  }, [newHexInputValue, group.hex, notifyHexChange]);
-
-  const handleUseSavedPaletteColor = useCallback(() => {
-    if (!selectedPaletteHex) { pushToast('warning', 'Select a saved color from the palette first'); return; }
-    setNewHexInputValue(selectedPaletteHex.toUpperCase());
-    setPreviewHexColor(selectedPaletteHex.toLowerCase());
-    notifyHexChange(selectedPaletteHex);
-  }, [selectedPaletteHex, notifyHexChange]);
+    const c = newHexInput.startsWith('#') ? newHexInput : '#' + newHexInput;
+    if (isValidHex(c)) { setPreviewHex(c.toLowerCase()); notifyHexChange(c); }
+    else { setNewHexInput(group.hex.toUpperCase()); setPreviewHex(group.hex.toLowerCase()); }
+  }, [newHexInput, group.hex, notifyHexChange]);
 
   const doApply = useCallback(async () => {
-    const candidate = previewHexColor.startsWith('#') ? previewHexColor : '#' + previewHexColor;
-    const newRgb    = hexToRgb(candidate);
+    const c      = previewHex.startsWith('#') ? previewHex : '#' + previewHex;
+    const newRgb = hexToRgb(c);
     if (!newRgb) { pushToast('error', 'Invalid color value'); return; }
     if (newRgb[0] === group.rgb[0] && newRgb[1] === group.rgb[1] && newRgb[2] === group.rgb[2]) {
-      pushToast('info', 'New color is the same as current'); return;
+      pushToast('info', 'New color matches current'); return;
     }
     setIsApplying(true);
     setShowConfirm(false);
@@ -292,7 +300,7 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
     } finally {
       setIsApplying(false);
     }
-  }, [previewHexColor, group.rgb, threshold]);
+  }, [previewHex, group.rgb, threshold, onApplied, pushToast]);
 
   const handleApplyClick = useCallback(() => {
     if (group.count > 1) { setShowConfirm(true); return; }
@@ -300,27 +308,40 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
   }, [group.count, doApply]);
 
   const rangeGradient = buildRangeGradient(group.rgb, threshold);
+  const previewFull   = previewHex.startsWith('#') ? previewHex : '#' + previewHex;
 
   const inlineInputStyle: React.CSSProperties = {
     height: size.inputHeightSm, padding: '0 9px',
     background: color.surface, border: `1px solid ${color.border}`,
     borderRadius: radius.md, color: color.text,
     fontSize: font.sizeSm, fontFamily: font.mono,
+    transition: transition.quick,
+    outline: 'none',
   };
 
   return (
-    <div style={{
-      borderRadius: radius.lg, background: color.surfaceRaised,
-      border: `1px solid ${isModified ? `${color.unsaved}50` : color.border}`,
-      overflow: 'hidden',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.md}px ${space.lg}px` }}>
+    <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        borderRadius: radius.lg,
+        background: isActive ? color.surfaceActive : isHovered ? color.surfaceRaised : 'transparent',
+        border: `1px solid ${isActive ? color.borderStrong : isModified ? `${color.unsaved}40` : 'transparent'}`,
+        overflow: 'hidden',
+        transition: transition.quick,
+        cursor: 'pointer',
+      }}
+    >
+      <div
+        onClick={onActivate}
+        style={{ display: 'flex', alignItems: 'center', gap: space.md, padding: `${space.md}px ${space.lg}px` }}
+      >
         <div style={{ flexShrink: 0 }}>
           <Swatch hexColor={group.hex.toLowerCase()} swatchSize={size.swatchLg} />
           <div
             title={`Match range ±${Math.round(threshold / Math.sqrt(3))} per channel`}
             style={{
-              width: size.swatchLg, height: 5, borderRadius: 3,
+              width: size.swatchLg, height: 4, borderRadius: 3,
               background: rangeGradient, marginTop: 4, border: `1px solid ${color.border}`,
             }}
           />
@@ -340,30 +361,35 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
                 unsaved
               </span>
             )}
-            {group.fieldNames.map((fieldName) => (
-              <Badge key={fieldName} badgeColor={color.textMuted}>{fieldName || 'gradient'}</Badge>
+            {group.fieldNames.map((fn) => (
+              <Badge key={fn} badgeColor={color.textMuted}>{fn || 'gradient'}</Badge>
             ))}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, marginTop: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, marginTop: 5, flexWrap: 'wrap' }}>
             <Badge badgeColor={color.warning}>{group.count} file{group.count !== 1 ? 's' : ''}</Badge>
             <Badge badgeColor={color.textFaint}>{group.total} instance{group.total !== 1 ? 's' : ''}</Badge>
             <button
-              onClick={() => setIsExpanded((v) => !v)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: color.textMuted, fontSize: font.sizeXs, padding: '2px 4px' }}
+              onClick={(e) => { e.stopPropagation(); setIsExpanded(v => !v); }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: color.textMuted, fontSize: font.sizeXs, padding: '2px 4px',
+                borderRadius: radius.sm, transition: transition.quick,
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = color.text)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = color.textMuted)}
             >
               {isExpanded ? 'hide files' : 'show files'}
             </button>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexShrink: 0 }}>
-          <Swatch
-            hexColor={previewHexColor.startsWith('#') ? previewHexColor : '#' + previewHexColor}
-            swatchSize={size.swatchMd}
-            title="New color preview"
-          />
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: space.sm, flexShrink: 0 }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Swatch hexColor={previewFull} swatchSize={size.swatchMd} title="New color preview" />
           <input
-            value={newHexInputValue}
+            value={newHexInput}
             maxLength={7}
             onChange={(e) => handleHexInputChange(e.target.value)}
             onBlur={handleHexInputCommit}
@@ -374,24 +400,39 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
             <input
               ref={pickerInputRef}
               type="color"
-              value={previewHexColor.startsWith('#') ? previewHexColor : '#' + previewHexColor}
+              value={previewFull}
               onChange={(e) => {
-                setPreviewHexColor(e.target.value);
-                setNewHexInputValue(e.target.value.toUpperCase());
+                setPreviewHex(e.target.value);
+                setNewHexInput(e.target.value.toUpperCase());
                 notifyHexChange(e.target.value);
               }}
               style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
             />
-            <Button height={size.buttonSm} width={46} onClick={() => pickerInputRef.current?.click()}>
-              <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
-                <circle cx="7" cy="7" r="5" stroke="currentColor" strokeWidth="1.3"/>
-                <path d="M7 4.5v5M4.5 7h5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-              </svg>
-            </Button>
+            <button
+              onClick={() => pickerInputRef.current?.click()}
+              title="Open color picker"
+              style={{
+                width: size.buttonSm, height: size.buttonSm,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: previewFull, border: `1px solid ${color.border}`,
+                borderRadius: radius.md, cursor: 'pointer', padding: 0,
+                transition: transition.quick, flexShrink: 0, position: 'relative', overflow: 'hidden',
+              }}
+            >
+              <div style={{
+                position: 'absolute', inset: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(0,0,0,0.35)',
+              }}>
+                <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                  <path d="M10 2L12 4L5 11H3V9L10 2Z" stroke="white" strokeWidth="1.3" strokeLinejoin="round"/>
+                  <path d="M8.5 3.5L10.5 5.5" stroke="white" strokeWidth="1.2" strokeLinecap="round"/>
+                  <circle cx="2.5" cy="12" r="1" fill="white"/>
+                </svg>
+              </div>
+            </button>
           </div>
-          <Button height={size.buttonSm} width={90} onClick={handleUseSavedPaletteColor} disabled={!selectedPaletteHex}>
-            Use Saved
-          </Button>
+
           {showConfirm ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
               <span style={{ fontSize: font.sizeXs, color: color.textMuted, whiteSpace: 'nowrap' }}>
@@ -401,7 +442,7 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
               <Button height={size.buttonSm} width={46} onClick={() => setShowConfirm(false)}>No</Button>
             </div>
           ) : (
-            <Button variant="primary" height={size.buttonSm} width={62} onClick={handleApplyClick} disabled={isApplying}>
+            <Button variant="primary" height={size.buttonSm} width={68} onClick={handleApplyClick} disabled={isApplying}>
               {isApplying ? '…' : 'Apply'}
             </Button>
           )}
@@ -409,15 +450,19 @@ const SharedColorCard: React.FC<SharedColorCardProps> = ({
       </div>
 
       {isExpanded && (
-        <div style={{ borderTop: `1px solid ${color.border}`, padding: `${space.sm}px ${space.xl}px`, background: color.surface }}>
+        <div style={{
+          borderTop: `1px solid ${color.border}`,
+          padding: `${space.sm}px ${space.xl}px`,
+          background: color.surface,
+        }}>
           {group.files.map((filename) => (
             <div
               key={filename}
-              onClick={() => onNavigateToFile(filename)}
+              onClick={(e) => { e.stopPropagation(); onNavigateToFile(filename); }}
               style={{
                 fontSize: font.sizeSm, fontFamily: font.mono, color: color.textMuted,
-                padding: '3px 0', lineHeight: 1.6, cursor: 'pointer',
-                textDecoration: 'underline', textDecorationColor: color.textFaint,
+                padding: '4px 0', lineHeight: 1.6, cursor: 'pointer',
+                transition: transition.quick,
               }}
               onMouseEnter={(e) => (e.currentTarget.style.color = color.text)}
               onMouseLeave={(e) => (e.currentTarget.style.color = color.textMuted)}

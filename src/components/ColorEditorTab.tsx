@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAppStore, useFilteredFiles } from '../store/appStore';
 import { tauriCommands } from '../utils/tauriCommands';
-import { color, font, size, space } from '../theme';
+import { color, font, radius, size, space, transition } from '../theme';
 import { Button } from './Primitives';
 import { SavedColorsPalette } from './SavedColorsPalette';
 import { ColorRow } from './ColorRow';
@@ -20,15 +20,17 @@ export const ColorEditorTab: React.FC = () => {
 
   const filteredFiles = useFilteredFiles();
 
-  const [activeFieldIndex, setActiveFieldIndex] = useState<number | null>(null);
+  const [activeFieldIndex, setActiveFieldIndex]   = useState<number | null>(null);
   const [selectedPaletteHex, setSelectedPaletteHex] = useState<string | null>(null);
+  const palettePickerRef = useRef<HTMLInputElement>(null);
+  const [pickerHovered, setPickerHovered] = useState(false);
 
-  const selectedFile  = loadedFiles.find((f) => f.filename === selectedFilename);
-  const editorState   = selectedFilename ? fileEditorStates[selectedFilename] : undefined;
-  const fields        = editorState?.fields ?? selectedFile?.fields ?? [];
+  const selectedFile   = loadedFiles.find((f) => f.filename === selectedFilename);
+  const editorState    = selectedFilename ? fileEditorStates[selectedFilename] : undefined;
+  const fields         = editorState?.fields ?? selectedFile?.fields ?? [];
   const pendingChanges = editorState?.pendingChanges;
   const pendingCount   = pendingChanges ? Object.keys(pendingChanges).length : 0;
-  const hasUnsaved    = pendingCount > 0;
+  const hasUnsaved     = pendingCount > 0;
 
   const currentFileIndex = selectedFilename
     ? filteredFiles.findIndex(f => f.filename === selectedFilename)
@@ -40,8 +42,8 @@ export const ColorEditorTab: React.FC = () => {
   const handleSaveAllRef = useRef<() => Promise<void>>(async () => {});
   const navigateFileRef  = useRef(navigateFile);
   const undoChangeRef    = useRef(undoChange);
-  navigateFileRef.current  = navigateFile;
-  undoChangeRef.current    = undoChange;
+  navigateFileRef.current = navigateFile;
+  undoChangeRef.current   = undoChange;
 
   const handleSaveAll = useCallback(async () => {
     if (!selectedFilename || !editorState || pendingCount === 0) return;
@@ -57,18 +59,17 @@ export const ColorEditorTab: React.FC = () => {
     } catch (err) {
       pushToast('error', `Save failed: ${err}`);
     }
-  }, [selectedFilename, editorState, pendingCount]);
+  }, [selectedFilename, editorState, pendingCount, updateFileFields, clearFilePendingChanges, pushToast]);
 
   handleSaveAllRef.current = handleSaveAll;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
+      const target  = e.target as HTMLElement;
       const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
-      if (e.ctrlKey && e.key === 's')   { e.preventDefault(); handleSaveAllRef.current(); }
+      if (e.ctrlKey && e.key === 's') { e.preventDefault(); handleSaveAllRef.current(); }
       if (e.ctrlKey && e.key === 'z' && !inInput && selectedFilename) {
-        e.preventDefault();
-        undoChangeRef.current(selectedFilename);
+        e.preventDefault(); undoChangeRef.current(selectedFilename);
       }
       if (!inInput && e.key === 'ArrowDown') { e.preventDefault(); navigateFileRef.current(1); }
       if (!inInput && e.key === 'ArrowUp')   { e.preventDefault(); navigateFileRef.current(-1); }
@@ -84,26 +85,24 @@ export const ColorEditorTab: React.FC = () => {
     const rgb = hexToRgb(hexColor);
     if (!rgb) return;
     pushToUndoStack(selectedFilename);
-    const origRgb  = editorState?.originalColors[targetIndex] ?? parseColorString(fields[targetIndex]?.value ?? '');
+    const origRgb   = editorState?.originalColors[targetIndex] ?? parseColorString(fields[targetIndex]?.value ?? '');
     const withAlpha = origRgb.length === 4 ? [...rgb.slice(0, 3), origRgb[3]] : rgb.slice(0, 3);
     const isSame    = withAlpha.every((v, i) => v === origRgb[i]);
     if (isSame) resetPendingChange(selectedFilename, targetIndex);
-    else         setPendingChange(selectedFilename, targetIndex, withAlpha);
+    else        setPendingChange(selectedFilename, targetIndex, withAlpha);
     const fieldName = fields[targetIndex]?.fieldName;
     pushToast('info', `Applied ${hexColor} to ${fieldName ?? `field ${targetIndex}`}`);
-  }, [activeFieldIndex, fields, editorState, selectedFilename]);
+  }, [activeFieldIndex, fields, editorState, selectedFilename, pushToUndoStack, resetPendingChange, setPendingChange, pushToast]);
 
-  const handleSaveActiveToPalette = useCallback(() => {
-    if (fields.length === 0) return;
-    const targetIndex = activeFieldIndex ?? 0;
-    const field       = fields[targetIndex];
-    if (!field) return;
-    const currentRgb = editorState?.pendingChanges[targetIndex]?.newRgb ?? parseColorString(field.value);
-    const hexColor   = rgbToHex(currentRgb).toUpperCase();
-    const deduped    = [hexColor, ...config.savedColors.filter((c) => c.toUpperCase() !== hexColor)].slice(0, 32);
+  const handlePickCustomColor = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const hex = e.target.value;
+    const rgb = hexToRgb(hex);
+    if (!rgb) return;
+    const hexUpper = rgbToHex(rgb).toUpperCase();
+    const deduped  = [hexUpper, ...config.savedColors.filter(c => c.toUpperCase() !== hexUpper)].slice(0, 32);
     persistConfig({ ...config, savedColors: deduped });
-    pushToast('success', `Saved ${hexColor} to palette`);
-  }, [activeFieldIndex, fields, editorState, config]);
+    pushToast('success', `Saved ${hexUpper} to palette`);
+  }, [config, persistConfig, pushToast]);
 
   if (!selectedFilename) {
     return (
@@ -117,34 +116,53 @@ export const ColorEditorTab: React.FC = () => {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{
         padding: `${space.md}px ${space.xl}px`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: space.md,
-        flexShrink: 0,
-        borderBottom: `1px solid ${color.border}`,
-        minHeight: 58,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: space.md, flexShrink: 0, borderBottom: `1px solid ${color.border}`, minHeight: 58,
       }}>
         <SavedColorsPalette onColorSelect={handleApplyPaletteColor} selectedHex={selectedPaletteHex} />
-        <Button height={size.buttonSm} onClick={handleSaveActiveToPalette} style={{ flexShrink: 0 }}>
-          <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
-            <path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          Save Color
-        </Button>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <input
+            ref={palettePickerRef}
+            type="color"
+            onChange={handlePickCustomColor}
+            style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }}
+          />
+          <button
+            onClick={() => palettePickerRef.current?.click()}
+            onMouseEnter={() => setPickerHovered(true)}
+            onMouseLeave={() => setPickerHovered(false)}
+            title="Pick a custom color to add to palette"
+            style={{
+              height: size.buttonSm, padding: '0 12px',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              background: pickerHovered ? color.surfaceActive : color.surfaceRaised,
+              border: `1px solid ${pickerHovered ? color.borderStrong : color.border}`,
+              borderRadius: radius.md, cursor: 'pointer',
+              fontSize: font.sizeSm, fontWeight: font.weightMedium,
+              color: pickerHovered ? color.text : color.textMuted,
+              transition: transition.quick, whiteSpace: 'nowrap',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+              <circle cx="5" cy="5" r="3.5" stroke="currentColor" strokeWidth="1.3"/>
+              <path d="M7.5 7.5L12 12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+              <circle cx="5" cy="5" r="1" fill="currentColor"/>
+            </svg>
+            Add Color
+          </button>
+        </div>
       </div>
 
       <div style={{
         padding: `0 ${space.xl}px`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        height: 50,
-        flexShrink: 0,
-        borderBottom: `1px solid ${color.border}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        height: 50, flexShrink: 0, borderBottom: `1px solid ${color.border}`,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: space.md, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: font.sizeSm, fontFamily: font.mono, color: color.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span style={{
+            fontSize: font.sizeSm, fontFamily: font.mono, color: color.text,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
             {selectedFilename}
           </span>
           {hasUnsaved && (
@@ -166,7 +184,7 @@ export const ColorEditorTab: React.FC = () => {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: `${space.sm}px ${space.md}px` }}>
         {fields.length === 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted, fontSize: font.sizeMd }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: color.textMuted }}>
             No color fields in this file
           </div>
         ) : (
