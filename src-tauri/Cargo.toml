@@ -1,6 +1,6 @@
 [package]
 name = "vpcf-editor"
-version = "0.9.3"
+version = "0.9.5"
 description = "VPCF Color Editor"
 authors = ["yousv"]
 edition = "2021"

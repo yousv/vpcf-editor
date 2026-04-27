@@ -1,13 +1,16 @@
 import { useMemo } from 'react';
 import { create } from 'zustand';
 import type {
-  AppConfig, ColorField, FileEditorState, LoadedFile,
-  PendingColorChange, TabName, Toast, ToastType,
+  AppConfig, ColorField, FileEditorState, HistoryEntry,
+  LoadedFile, TabName, Toast, ToastType,
 } from '../types';
 import { parseColorString } from '../utils/colorUtils';
 import { tauriCommands } from '../utils/tauriCommands';
 
 const MAX_UNDO = 50;
+const MAX_HISTORY = 500;
+
+function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; }
 
 function buildOriginalColors(fields: ColorField[]): Record<number, number[]> {
   const out: Record<number, number[]> = {};
@@ -32,6 +35,9 @@ interface AppStore {
   loadedFiles: LoadedFile[];
   setLoadedFiles: (files: LoadedFile[]) => void;
 
+  colorlessFiles: string[];
+  setColorlessFiles: (files: string[]) => void;
+
   selectedFilename: string | null;
   setSelectedFilename: (filename: string | null) => void;
   navigateFile: (direction: 1 | -1) => void;
@@ -44,14 +50,30 @@ interface AppStore {
   clearFilePendingChanges: (filename: string) => void;
   updateFileFields: (filename: string, fields: ColorField[]) => void;
 
-  undoStacks: Record<string, Array<Record<number, PendingColorChange>>>;
+  undoStacks: Record<string, Array<Record<number, number[]>>>;
+  redoStacks: Record<string, Array<Record<number, number[]>>>;
   pushToUndoStack: (filename: string) => void;
   undoChange: (filename: string) => void;
+  redoChange: (filename: string) => void;
 
   sharedPendingEdits: Record<string, SharedPendingEdit>;
   setSharedPendingEdit: (key: string, edit: SharedPendingEdit) => void;
   clearSharedPendingEdit: (key: string) => void;
   clearAllSharedPendingEdits: () => void;
+
+  sharedUndoStack: Array<Record<string, SharedPendingEdit>>;
+  sharedRedoStack: Array<Record<string, SharedPendingEdit>>;
+  pushSharedUndo: () => void;
+  undoSharedEdit: () => void;
+  redoSharedEdit: () => void;
+
+  historyEntries: HistoryEntry[];
+  addHistoryEntry: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => void;
+  loadHistory: (folderPath: string) => Promise<void>;
+  clearHistory: () => void;
+
+  paletteSelectHandler: ((hex: string) => void) | null;
+  setPaletteSelectHandler: (fn: ((hex: string) => void) | null) => void;
 
   activeTab: TabName;
   setActiveTab: (tab: TabName) => void;
@@ -73,7 +95,7 @@ interface AppStore {
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
-  config: { folderPath: null, savedColors: [], colorMatchThreshold: 30 },
+  config: { folderPath: null, palettes: [], colorMatchThreshold: 30, colorDisplayMode: 'hex' },
   setConfig: (config) => set({ config }),
   persistConfig: async (config) => {
     set({ config });
@@ -82,6 +104,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   loadedFiles: [],
   setLoadedFiles: (files) => set({ loadedFiles: files }),
+
+  colorlessFiles: [],
+  setColorlessFiles: (files) => set({ colorlessFiles: files }),
 
   selectedFilename: null,
   setSelectedFilename: (filename) => set({ selectedFilename: filename }),
@@ -156,28 +181,84 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   undoStacks: {},
+  redoStacks: {},
 
   pushToUndoStack: (filename) => {
-    const { fileEditorStates, undoStacks } = get();
+    const { fileEditorStates, undoStacks, redoStacks } = get();
     const es = fileEditorStates[filename];
     if (!es) return;
+    const snapshot: Record<number, number[]> = {};
+    es.fields.forEach((_, idx) => {
+      snapshot[idx] = es.pendingChanges[idx]?.newRgb ?? es.originalColors[idx] ?? [];
+    });
     const stack   = undoStacks[filename] ?? [];
     const trimmed = stack.length >= MAX_UNDO ? stack.slice(1) : stack;
-    set({ undoStacks: { ...undoStacks, [filename]: [...trimmed, { ...es.pendingChanges }] } });
+    set({
+      undoStacks: { ...undoStacks, [filename]: [...trimmed, snapshot] },
+      redoStacks: { ...redoStacks, [filename]: [] },
+    });
   },
 
   undoChange: (filename) => {
-    const { fileEditorStates, undoStacks } = get();
+    const { fileEditorStates, undoStacks, redoStacks, addHistoryEntry, pushToast } = get();
     const stack = undoStacks[filename];
     if (!stack || stack.length === 0) return;
-    const prev     = stack[stack.length - 1];
-    const newStack = stack.slice(0, -1);
-    const es       = fileEditorStates[filename];
+    const prevSnapshot = stack[stack.length - 1];
+    const newStack     = stack.slice(0, -1);
+    const es           = fileEditorStates[filename];
     if (!es) return;
-    set({
-      fileEditorStates: { ...fileEditorStates, [filename]: { ...es, pendingChanges: prev } },
-      undoStacks:       { ...undoStacks, [filename]: newStack },
+    const curSnapshot: Record<number, number[]> = {};
+    es.fields.forEach((_, idx) => {
+      curSnapshot[idx] = es.pendingChanges[idx]?.newRgb ?? es.originalColors[idx] ?? [];
     });
+    const newPending: Record<number, import('../types').PendingColorChange> = {};
+    es.fields.forEach((_, idx) => {
+      const target   = prevSnapshot[idx] ?? es.originalColors[idx];
+      const original = es.originalColors[idx] ?? target;
+      if (target && !target.every((v, i) => v === original[i])) {
+        newPending[idx] = { fieldIndex: idx, newRgb: target, originalRgb: original };
+      }
+    });
+    const redoStack   = redoStacks[filename] ?? [];
+    const trimmedRedo = redoStack.length >= MAX_UNDO ? redoStack.slice(1) : redoStack;
+    set({
+      fileEditorStates: { ...fileEditorStates, [filename]: { ...es, pendingChanges: newPending } },
+      undoStacks:       { ...undoStacks, [filename]: newStack },
+      redoStacks:       { ...redoStacks, [filename]: [...trimmedRedo, curSnapshot] },
+    });
+    pushToast('info', 'Undo');
+    addHistoryEntry({ action: 'undo', filename, description: `Undo — ${filename}` });
+  },
+
+  redoChange: (filename) => {
+    const { fileEditorStates, undoStacks, redoStacks, addHistoryEntry, pushToast } = get();
+    const redoStack = redoStacks[filename];
+    if (!redoStack || redoStack.length === 0) return;
+    const nextSnapshot = redoStack[redoStack.length - 1];
+    const newRedo      = redoStack.slice(0, -1);
+    const es           = fileEditorStates[filename];
+    if (!es) return;
+    const curSnapshot: Record<number, number[]> = {};
+    es.fields.forEach((_, idx) => {
+      curSnapshot[idx] = es.pendingChanges[idx]?.newRgb ?? es.originalColors[idx] ?? [];
+    });
+    const newPending: Record<number, import('../types').PendingColorChange> = {};
+    es.fields.forEach((_, idx) => {
+      const target   = nextSnapshot[idx] ?? es.originalColors[idx];
+      const original = es.originalColors[idx] ?? target;
+      if (target && !target.every((v, i) => v === original[i])) {
+        newPending[idx] = { fieldIndex: idx, newRgb: target, originalRgb: original };
+      }
+    });
+    const undoStack   = undoStacks[filename] ?? [];
+    const trimmedUndo = undoStack.length >= MAX_UNDO ? undoStack.slice(1) : undoStack;
+    set({
+      fileEditorStates: { ...fileEditorStates, [filename]: { ...es, pendingChanges: newPending } },
+      undoStacks:       { ...undoStacks, [filename]: [...trimmedUndo, curSnapshot] },
+      redoStacks:       { ...redoStacks, [filename]: newRedo },
+    });
+    pushToast('info', 'Redo');
+    addHistoryEntry({ action: 'redo', filename, description: `Redo — ${filename}` });
   },
 
   sharedPendingEdits: {},
@@ -190,6 +271,77 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { sharedPendingEdits: next };
     }),
   clearAllSharedPendingEdits: () => set({ sharedPendingEdits: {} }),
+
+  sharedUndoStack: [],
+  sharedRedoStack: [],
+
+  pushSharedUndo: () => {
+    const { sharedPendingEdits, sharedUndoStack } = get();
+    const trimmed = sharedUndoStack.length >= MAX_UNDO ? sharedUndoStack.slice(1) : sharedUndoStack;
+    set({ sharedUndoStack: [...trimmed, { ...sharedPendingEdits }], sharedRedoStack: [] });
+  },
+
+  undoSharedEdit: () => {
+    const { sharedPendingEdits, sharedUndoStack, sharedRedoStack, pushToast, addHistoryEntry } = get();
+    if (sharedUndoStack.length === 0) return;
+    const prev     = sharedUndoStack[sharedUndoStack.length - 1];
+    const newUndo  = sharedUndoStack.slice(0, -1);
+    const trimRedo = sharedRedoStack.length >= MAX_UNDO ? sharedRedoStack.slice(1) : sharedRedoStack;
+    set({
+      sharedPendingEdits: prev,
+      sharedUndoStack:    newUndo,
+      sharedRedoStack:    [...trimRedo, { ...sharedPendingEdits }],
+    });
+    pushToast('info', 'Undo');
+    addHistoryEntry({ action: 'undo', description: 'Undo shared color edit' });
+  },
+
+  redoSharedEdit: () => {
+    const { sharedPendingEdits, sharedUndoStack, sharedRedoStack, pushToast, addHistoryEntry } = get();
+    if (sharedRedoStack.length === 0) return;
+    const next     = sharedRedoStack[sharedRedoStack.length - 1];
+    const newRedo  = sharedRedoStack.slice(0, -1);
+    const trimUndo = sharedUndoStack.length >= MAX_UNDO ? sharedUndoStack.slice(1) : sharedUndoStack;
+    set({
+      sharedPendingEdits: next,
+      sharedUndoStack:    [...trimUndo, { ...sharedPendingEdits }],
+      sharedRedoStack:    newRedo,
+    });
+    pushToast('info', 'Redo');
+    addHistoryEntry({ action: 'redo', description: 'Redo shared color edit' });
+  },
+
+  historyEntries: [],
+
+  addHistoryEntry: (entry) => {
+    const { historyEntries, config } = get();
+    const newEntry: HistoryEntry = { ...entry, id: genId(), timestamp: Date.now() };
+    const next = [newEntry, ...historyEntries].slice(0, MAX_HISTORY);
+    set({ historyEntries: next });
+    if (config.folderPath) {
+      tauriCommands.saveHistory(config.folderPath, next).catch(() => {});
+    }
+  },
+
+  loadHistory: async (folderPath) => {
+    try {
+      const entries = await tauriCommands.loadHistory(folderPath);
+      set({ historyEntries: entries });
+    } catch {
+      set({ historyEntries: [] });
+    }
+  },
+
+  clearHistory: () => {
+    const { config } = get();
+    set({ historyEntries: [] });
+    if (config.folderPath) {
+      tauriCommands.saveHistory(config.folderPath, []).catch(() => {});
+    }
+  },
+
+  paletteSelectHandler: null,
+  setPaletteSelectHandler: (fn) => set({ paletteSelectHandler: fn }),
 
   activeTab: 'colorEditor',
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -205,7 +357,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   toasts: [],
   pushToast: (type, message) => {
-    const id    = `toast-${Date.now()}-${Math.random()}`;
+    const id    = genId();
     const toast: Toast = { id, type, message };
     set((s) => ({ toasts: [...s.toasts, toast] }));
     setTimeout(() => get().dismissToast(id), 3800);
@@ -219,15 +371,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectedFilename:   null,
       fileEditorStates:   {},
       undoStacks:         {},
+      redoStacks:         {},
       sharedPendingEdits: {},
+      sharedUndoStack:    [],
+      sharedRedoStack:    [],
+      colorlessFiles:     [],
       fileSearchQuery:    '',
+      historyEntries:     [],
+      paletteSelectHandler: null,
     });
     await persistConfig({ ...config, folderPath: null });
   },
 }));
 
 export function useFilteredFiles() {
-  const loadedFiles    = useAppStore((s) => s.loadedFiles);
+  const loadedFiles     = useAppStore((s) => s.loadedFiles);
   const fileSearchQuery = useAppStore((s) => s.fileSearchQuery);
   return useMemo(
     () => loadedFiles.filter((f) =>

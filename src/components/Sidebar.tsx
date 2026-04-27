@@ -17,7 +17,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
     setLoadedFiles, initFileEditorState,
     fileEditorStates, pushToast,
     config, persistConfig, navigateFile,
-    closeFolder,
+    closeFolder, colorlessFiles, setColorlessFiles,
+    loadHistory,
   } = useAppStore();
 
   const filteredFiles   = useFilteredFiles();
@@ -27,13 +28,46 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
   const selectedItemRef = useRef<HTMLDivElement>(null);
   const listRef         = useRef<HTMLDivElement>(null);
 
+  const [showColorlessPopup, setShowColorlessPopup] = useState(false);
+  const popupRef     = useRef<HTMLDivElement>(null);
+  const triggerRef   = useRef<HTMLButtonElement>(null);
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number } | null>(null);
+
   const folderDisplayName = config.folderPath
     ? config.folderPath.split(/[\\\/]/).filter(Boolean).pop() ?? 'Files'
     : null;
 
+  useEffect(() => { selectedItemRef.current?.scrollIntoView({ block: 'nearest' }); }, [selectedFilename]);
+
   useEffect(() => {
-    selectedItemRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [selectedFilename]);
+    if (!showColorlessPopup) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        popupRef.current && !popupRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) {
+        setShowColorlessPopup(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showColorlessPopup]);
+
+  const openPopup = useCallback(() => {
+    if (!triggerRef.current) return;
+    const rect       = triggerRef.current.getBoundingClientRect();
+    const popupW     = 280;
+    const popupH     = Math.min(280, colorlessFiles.length * 28 + 80);
+    const viewportW  = window.innerWidth;
+    const viewportH  = window.innerHeight;
+    let left = rect.right - popupW;
+    let top  = rect.bottom + 6;
+    if (left < 8) left = 8;
+    if (left + popupW > viewportW - 8) left = viewportW - popupW - 8;
+    if (top + popupH > viewportH - 8) top = rect.top - popupH - 6;
+    setPopupPos({ top, left });
+    setShowColorlessPopup(v => !v);
+  }, [colorlessFiles.length]);
 
   const handleLoadFolder = useCallback(async () => {
     const chosenPath = await tauriCommands.openFolderDialog();
@@ -45,18 +79,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
       files.forEach((f) => initFileEditorState(f.filename, f.fields));
       await persistConfig({ ...config, folderPath: chosenPath });
       if (files.length > 0) setSelectedFilename(files[0].filename);
+      try {
+        const colorless = await tauriCommands.getColorlessFiles();
+        setColorlessFiles(colorless);
+      } catch {}
+      await loadHistory(chosenPath);
       pushToast('success', `Loaded ${files.length} file${files.length !== 1 ? 's' : ''}`);
     } catch (err) {
       pushToast('error', String(err));
     } finally {
       setIsLoadingFolder(false);
     }
-  }, [config, initFileEditorState, persistConfig, pushToast, setIsLoadingFolder, setLoadedFiles, setSelectedFilename]);
+  }, [config, initFileEditorState, persistConfig, pushToast, setIsLoadingFolder, setLoadedFiles, setSelectedFilename, setColorlessFiles]);
 
   const handleCloseFolder = useCallback(async () => {
     await closeFolder();
+    setColorlessFiles([]);
     pushToast('info', 'Folder closed');
-  }, [closeFolder, pushToast]);
+  }, [closeFolder, pushToast, setColorlessFiles]);
 
   const handleListKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); navigateFile(1); }
@@ -111,7 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
             title={config.folderPath ?? undefined}
             onClick={folderDisplayName ? handleLoadFolder : undefined}
           >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
               <path d="M2 4h5l2 2h5v8H2V4z" stroke={color.textFaint} strokeWidth="1.3" strokeLinejoin="round"/>
             </svg>
             <span style={{
@@ -128,77 +168,135 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-            <IconButton title="Settings" onClick={onSettingsOpen}>
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-                <path d="M6.5 1.5h3l.5 2a5 5 0 0 1 1.2.7l2-.7 1.5 2.6-1.6 1.3a5 5 0 0 1 0 1.4l1.6 1.3-1.5 2.6-2-.7a5 5 0 0 1-1.2.7l-.5 2h-3l-.5-2a5 5 0 0 1-1.2-.7l-2 .7L1.3 10l1.6-1.3a5 5 0 0 1 0-1.4L1.3 6l1.5-2.6 2 .7a5 5 0 0 1 1.2-.7l.5-2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
-                <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.3"/>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0, position: 'relative' }}>
+            {colorlessFiles.length > 0 && (
+              <button
+                ref={triggerRef}
+                onClick={openPopup}
+                title={`${colorlessFiles.length} file${colorlessFiles.length !== 1 ? 's' : ''} with no color fields`}
+                style={{
+                  width: 28, height: 28,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: showColorlessPopup ? color.surfaceActive : 'transparent',
+                  border: `1px solid ${showColorlessPopup ? color.border : 'transparent'}`,
+                  borderRadius: radius.md, cursor: 'pointer',
+                  transition: transition.quick, padding: 0,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = color.surfaceRaised; e.currentTarget.style.borderColor = color.border; }}
+                onMouseLeave={(e) => {
+                  if (!showColorlessPopup) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'transparent'; }
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+                  <circle cx="7" cy="7" r="5.5" stroke={color.warning} strokeWidth="1.3"/>
+                  <path d="M7 4.5v3M7 9v.5" stroke={color.warning} strokeWidth="1.3" strokeLinecap="round"/>
+                </svg>
+              </button>
+            )}
+
+            <IconButton onClick={onSettingsOpen} title="Settings">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <path d="M6.3 1.5h3.4l.4 1.6c.4.15.8.36 1.15.62l1.55-.52 1.7 2.94-1.2 1.05c.04.25.06.5.06.75s-.02.5-.06.75l1.2 1.05-1.7 2.94-1.55-.52c-.35.26-.75.47-1.15.62L9.7 14.5H6.3l-.4-1.61a5 5 0 0 1-1.15-.62l-1.55.52-1.7-2.94 1.2-1.05A5.1 5.1 0 0 1 2.65 8c0-.25.02-.5.05-.75L1.5 6.2l1.7-2.94 1.55.52c.35-.26.75-.47 1.15-.62L6.3 1.5z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+                <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.2"/>
               </svg>
             </IconButton>
           </div>
         </div>
 
-        <div style={{ padding: `0 ${space.lg}px ${space.md}px`, flexShrink: 0 }}>
-          <Input
-            value={fileSearchQuery}
-            onChange={setFileSearchQuery}
-            placeholder="Filter files…"
-            height={size.inputHeightSm}
-          />
-        </div>
-
-        <Divider />
-
-        <div
-          ref={listRef}
-          tabIndex={0}
-          onKeyDown={handleListKeyDown}
-          style={{ flex: 1, overflowY: 'auto', padding: `${space.xs}px 0`, outline: 'none' }}
-        >
-          {isLoadingFolder ? (
-            <div style={{ padding: space.xl, textAlign: 'center', color: color.textMuted, fontSize: font.sizeBase }}>
-              Loading…
+        {showColorlessPopup && popupPos && (
+          <div
+            ref={popupRef}
+            style={{
+              position: 'fixed',
+              top: popupPos.top,
+              left: popupPos.left,
+              zIndex: 200,
+              background: color.surfaceRaised,
+              border: `1px solid ${color.borderStrong}`,
+              borderRadius: radius.lg,
+              padding: `${space.md}px`,
+              width: 280, maxHeight: 280,
+              overflowY: 'auto',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.7)',
+            }}
+          >
+            <div style={{ fontSize: font.sizeXs, color: color.warning, fontWeight: font.weightSemiBold, letterSpacing: '0.07em', textTransform: 'uppercase', marginBottom: space.sm }}>
+              No color fields found
             </div>
-          ) : filteredFiles.length === 0 && loadedFiles.length === 0 ? (
-            <div style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center',
-              padding: `${space.xxl}px ${space.lg}px`, gap: space.xl,
-            }}>
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-                <path d="M3 6h5l2 2h11v11H3V6z" stroke={color.textFaint} strokeWidth="1.2" strokeLinejoin="round"/>
-              </svg>
-              <span style={{ color: color.textMuted, fontSize: font.sizeBase, textAlign: 'center', lineHeight: 1.5 }}>
-                No folder loaded
-              </span>
-              <Button variant="primary" height={size.buttonMd} width={sidebarWidth - 48} onClick={handleLoadFolder}>
-                Open Folder
-              </Button>
+            <div style={{ fontSize: font.sizeXs, color: color.textFaint, marginBottom: space.md, lineHeight: 1.5 }}>
+              These .vpcf files were found but contain no recognisable color values:
             </div>
-          ) : filteredFiles.length === 0 ? (
-            <div style={{ padding: space.xl, textAlign: 'center', color: color.textMuted, fontSize: font.sizeBase }}>
-              No matches
-            </div>
-          ) : (
-            filteredFiles.map((file) => {
-              const isSelected  = file.filename === selectedFilename;
-              const editorState = fileEditorStates[file.filename];
-              const hasUnsaved  = editorState && Object.keys(editorState.pendingChanges).length > 0;
-              return (
-                <SidebarItem
-                  key={file.filename}
-                  filename={file.filename}
-                  isSelected={isSelected}
-                  hasUnsaved={!!hasUnsaved}
-                  itemRef={isSelected ? selectedItemRef : undefined}
-                  onClick={() => { setSelectedFilename(file.filename); listRef.current?.focus(); }}
-                />
-              );
-            })
-          )}
-        </div>
+            {colorlessFiles.map(f => (
+              <div
+                key={f}
+                onClick={() => {
+                  const s = useAppStore.getState();
+                  s.setSelectedFilename(f);
+                  s.setActiveTab('rawText');
+                  setShowColorlessPopup(false);
+                }}
+                style={{
+                  fontSize: font.sizeXs, fontFamily: font.mono, color: color.textMuted,
+                  padding: '3px 0', lineHeight: 1.6, cursor: 'pointer', transition: transition.quick,
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = color.text)}
+                onMouseLeave={(e) => (e.currentTarget.style.color = color.textMuted)}
+              >
+                {f}
+              </div>
+            ))}
+          </div>
+        )}
 
-        {loadedFiles.length > 0 && (
+        {loadedFiles.length === 0 ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: space.xl }}>
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <path d="M4 8h10l4 4h10v16H4V8z" stroke={color.textFaint} strokeWidth="1.5" strokeLinejoin="round"/>
+            </svg>
+            <Button variant="primary" height={size.buttonMd} onClick={handleLoadFolder} disabled={isLoadingFolder}>
+              {isLoadingFolder ? 'Loading…' : 'Open Folder'}
+            </Button>
+          </div>
+        ) : (
           <>
+            <div style={{ padding: `0 ${space.md}px ${space.sm}px`, flexShrink: 0 }}>
+              <Input
+                value={fileSearchQuery}
+                onChange={setFileSearchQuery}
+                placeholder="Filter files…"
+                height={size.buttonSm}
+              />
+            </div>
+
+            <div
+              ref={listRef}
+              tabIndex={0}
+              onKeyDown={handleListKeyDown}
+              style={{ flex: 1, overflowY: 'auto', outline: 'none', scrollbarWidth: 'thin', scrollbarColor: `${color.border} transparent` }}
+            >
+              {filteredFiles.length === 0 ? (
+                <div style={{ padding: `${space.lg}px`, color: color.textFaint, fontSize: font.sizeSm, textAlign: 'center' }}>
+                  No files match
+                </div>
+              ) : (
+                filteredFiles.map((file) => {
+                  const isSelected = file.filename === selectedFilename;
+                  const hasUnsaved = Object.keys(fileEditorStates[file.filename]?.pendingChanges ?? {}).length > 0;
+                  return (
+                    <SidebarItem
+                      key={file.filename}
+                      filename={file.filename}
+                      isSelected={isSelected}
+                      hasUnsaved={hasUnsaved}
+                      itemRef={isSelected ? selectedItemRef : undefined}
+                      onClick={() => setSelectedFilename(file.filename)}
+                    />
+                  );
+                })
+              )}
+            </div>
+
             <Divider />
             <div style={{ padding: `${space.sm}px ${space.md}px`, flexShrink: 0, display: 'flex', gap: space.sm }}>
               <Button
@@ -208,7 +306,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onSettingsOpen }) => {
                 onClick={handleLoadFolder}
                 style={{ justifyContent: 'flex-start', paddingLeft: space.md, flex: 1 }}
               >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                   <path d="M2 4h5l2 2h5v8H2V4z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
                 </svg>
                 Change Folder
@@ -261,7 +359,7 @@ const SidebarItem: React.FC<{
       </span>
       {hasUnsaved && (
         <div title="Unsaved changes" style={{
-          marginLeft: 9, width: 6, height: 6,
+          marginLeft: 9, width: 7, height: 7,
           borderRadius: '50%', background: color.unsaved, flexShrink: 0,
         }} />
       )}
@@ -270,24 +368,23 @@ const SidebarItem: React.FC<{
 };
 
 const CloseFolderButton: React.FC<{ onClick: () => void }> = ({ onClick }) => {
-  const [isHovered, setIsHovered] = useState(false);
+  const [h, setH] = useState(false);
   return (
     <button
       onClick={onClick}
       title="Close folder"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{
         height: size.buttonSm, width: size.buttonSm,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: isHovered ? color.surfaceActive : 'transparent',
-        border: `1px solid ${isHovered ? color.border : 'transparent'}`,
+        background: h ? color.surfaceActive : 'transparent',
+        border: `1px solid ${h ? color.border : 'transparent'}`,
         borderRadius: radius.md, cursor: 'pointer',
-        color: isHovered ? color.error : color.textFaint,
+        color: h ? color.error : color.textFaint,
         flexShrink: 0, padding: 0, transition: transition.quick,
       }}
     >
-      <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+      <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
         <path d="M2 2l10 10M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
       </svg>
     </button>

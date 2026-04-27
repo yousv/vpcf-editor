@@ -2,7 +2,7 @@ mod color_utils;
 mod config;
 mod file_ops;
 
-use config::{load_config, save_config, AppConfig};
+use config::{config_dir_path, load_config, save_config, AppConfig};
 use file_ops::{
     apply_color_changes_to_content, apply_shared_color_to_files, backup_file,
     compute_shared_colors, find_vpcf_files, get_file_mtime, parse_color_fields, read_file,
@@ -15,9 +15,10 @@ use std::sync::Mutex;
 use tauri::State;
 
 pub struct AppStateInner {
-    pub files: HashMap<String, FileData>,
-    pub folder_path: Option<String>,
-    pub config: AppConfig,
+    pub files:           HashMap<String, FileData>,
+    pub folder_path:     Option<String>,
+    pub config:          AppConfig,
+    pub colorless_files: Vec<String>,
 }
 
 pub struct AppState(pub Mutex<AppStateInner>);
@@ -25,7 +26,7 @@ pub struct AppState(pub Mutex<AppStateInner>);
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteVersion {
-    pub version: String,
+    pub version:     String,
     pub release_url: Option<String>,
 }
 
@@ -40,8 +41,9 @@ fn load_folder(path: String, state: State<'_, AppState>) -> Result<Vec<LoadedFil
         return Err("No .vpcf files found in the selected folder.".to_string());
     }
 
-    let mut file_map: HashMap<String, FileData> = HashMap::new();
-    let mut loaded_list: Vec<LoadedFile> = Vec::new();
+    let mut file_map:       HashMap<String, FileData> = HashMap::new();
+    let mut loaded_list:    Vec<LoadedFile>            = Vec::new();
+    let mut colorless_list: Vec<String>                = Vec::new();
 
     for abs_path in &vpcf_paths {
         let relative_name = Path::new(abs_path)
@@ -50,26 +52,30 @@ fn load_folder(path: String, state: State<'_, AppState>) -> Result<Vec<LoadedFil
             .unwrap_or_else(|_| abs_path.clone());
 
         let raw_content = match read_file(abs_path) {
-            Ok(c) => c,
+            Ok(c)  => c,
             Err(_) => continue,
         };
 
         let parsed_fields = parse_color_fields(&raw_content, &relative_name);
-        if parsed_fields.is_empty() { continue; }
+
+        if parsed_fields.is_empty() {
+            colorless_list.push(relative_name);
+            continue;
+        }
 
         let last_modified = get_file_mtime(abs_path);
 
         loaded_list.push(LoadedFile {
             filename: relative_name.clone(),
             abs_path: abs_path.clone(),
-            fields: parsed_fields.clone(),
+            fields:   parsed_fields.clone(),
         });
 
         file_map.insert(relative_name, FileData {
             abs_path: abs_path.clone(),
-            content: raw_content,
-            fields: parsed_fields,
-            mtime: last_modified,
+            content:  raw_content,
+            fields:   parsed_fields,
+            mtime:    last_modified,
         });
     }
 
@@ -77,13 +83,20 @@ fn load_folder(path: String, state: State<'_, AppState>) -> Result<Vec<LoadedFil
         return Err("Found .vpcf files but none contain recognised color fields.".to_string());
     }
 
-    let mut inner = lock_state(&state)?;
-    inner.files = file_map;
-    inner.folder_path = Some(path.clone());
+    let mut inner          = lock_state(&state)?;
+    inner.files            = file_map;
+    inner.folder_path      = Some(path.clone());
     inner.config.folder_path = Some(path);
+    inner.colorless_files  = colorless_list;
     let _ = save_config(&inner.config);
 
     Ok(loaded_list)
+}
+
+#[tauri::command]
+fn get_colorless_files_cmd(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    let inner = lock_state(&state)?;
+    Ok(inner.colorless_files.clone())
 }
 
 #[tauri::command]
@@ -254,13 +267,63 @@ async fn check_for_updates() -> Result<RemoteVersion, String> {
     Ok(data)
 }
 
+#[tauri::command]
+fn open_config_folder(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = config_dir_path();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(dir.to_string_lossy().to_string(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    pub id:          String,
+    pub timestamp:   u64,
+    pub action:      String,
+    pub filename:    Option<String>,
+    pub field_name:  Option<String>,
+    pub old_hex:     Option<String>,
+    pub new_hex:     Option<String>,
+    pub description: String,
+}
+
+fn history_file_path(folder_path: &str) -> std::path::PathBuf {
+    let sanitized: String = folder_path
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+        .collect();
+    config::config_dir_path()
+        .join("history")
+        .join(format!("{}.json", &sanitized[sanitized.len().saturating_sub(80)..]))
+}
+
+#[tauri::command]
+fn save_history_cmd(folder_path: String, entries: Vec<HistoryEntry>) -> Result<(), String> {
+    let path = history_file_path(&folder_path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&entries).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn load_history_cmd(folder_path: String) -> Result<Vec<HistoryEntry>, String> {
+    let path = history_file_path(&folder_path);
+    if !path.exists() { return Ok(Vec::new()); }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let loaded_config = load_config();
     let initial_state = AppStateInner {
-        files: HashMap::new(),
-        folder_path: None,
-        config: loaded_config,
+        files:           HashMap::new(),
+        folder_path:     None,
+        config:          loaded_config,
+        colorless_files: Vec::new(),
     };
 
     tauri::Builder::default()
@@ -281,6 +344,10 @@ pub fn run() {
             open_folder_dialog,
             open_url,
             check_for_updates,
+            get_colorless_files_cmd,
+            open_config_folder,
+            save_history_cmd,
+            load_history_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

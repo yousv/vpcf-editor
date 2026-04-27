@@ -48,4 +48,16 @@ export const tauriCommands = {
 
   checkForUpdates: (): Promise<RemoteVersion> =>
     invoke('check_for_updates'),
+
+  getColorlessFiles: (): Promise<string[]> =>
+    invoke('get_colorless_files_cmd'),
+
+  openConfigFolder: (): Promise<void> =>
+    invoke('open_config_folder'),
+
+  saveHistory: (folderPath: string, entries: import('../types').HistoryEntry[]): Promise<void> =>
+    invoke('save_history_cmd', { folderPath, entries }),
+
+  loadHistory: (folderPath: string): Promise<import('../types').HistoryEntry[]> =>
+    invoke('load_history_cmd', { folderPath }),
 };

@@ -1,5 +1,5 @@
-import React, { CSSProperties, ReactNode, useState } from 'react';
-import { color, font, radius, size, shadow, transition } from '../theme';
+import React, { CSSProperties, ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { color, font, radius, size, shadow, space, transition } from '../theme';
 
 interface ButtonProps {
   children: ReactNode;
@@ -234,3 +234,267 @@ export const SectionLabel: React.FC<{ children: ReactNode; style?: CSSProperties
     {children}
   </span>
 );
+
+interface PickerButtonProps {
+  currentHex: string;
+  onInput: (hex: string) => void;
+  onCommit?: () => void;
+  btnSize?: number;
+}
+
+export const PickerButton: React.FC<PickerButtonProps> = ({
+  currentHex, onInput, onCommit, btnSize = 30,
+}) => {
+  const [hovered, setHovered] = useState(false);
+  const [open, setOpen]       = useState(false);
+  const [draft, setDraft]     = useState('#000000');
+  const popoverRef            = useRef<HTMLDivElement>(null);
+  const triggerRef            = useRef<HTMLButtonElement>(null);
+  const handleApplyRef        = useRef<() => void>(() => {});
+  const [pos, setPos]         = useState({ top: 0, left: 0 });
+
+  const safeHex = /^#[0-9a-fA-F]{6}$/.test(currentHex) ? currentHex : '#000000';
+
+  const openPicker = useCallback(() => {
+    if (open) { setOpen(false); return; }
+    setDraft(safeHex);
+    if (triggerRef.current) {
+      const r  = triggerRef.current.getBoundingClientRect();
+      const pw = 190;
+      const ph = 148;
+      let left = r.left;
+      let top  = r.bottom + 6;
+      if (left + pw > window.innerWidth - 8)  left = window.innerWidth - pw - 8;
+      if (top  + ph > window.innerHeight - 8) top  = r.top - ph - 6;
+      setPos({ top, left });
+    }
+    setOpen(true);
+  }, [safeHex, open]);
+
+  const handleApply = useCallback(() => {
+    onInput(draft);
+    onCommit?.();
+    setOpen(false);
+  }, [draft, onInput, onCommit]);
+
+  // Always keep ref pointing to latest handleApply so keydown never goes stale
+  useEffect(() => { handleApplyRef.current = handleApply; }, [handleApply]);
+
+  // Only re-attach listeners when open changes — not on every draft keystroke.
+  // Use capture:true so stopPropagation in child components never blocks us.
+  useEffect(() => {
+    if (!open) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        triggerRef.current && !triggerRef.current.contains(e.target as Node)
+      ) setOpen(false);
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+      if (e.key === 'Enter')  { e.stopPropagation(); handleApplyRef.current(); }
+    };
+
+    document.addEventListener('mousedown', onMouseDown, true);
+    document.addEventListener('keydown',   onKeyDown,   true);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown, true);
+      document.removeEventListener('keydown',   onKeyDown,   true);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        onClick={openPicker}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width: btnSize, height: btnSize, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: open || hovered ? color.surfaceActive : color.surfaceRaised,
+          border: `1px solid ${open || hovered ? color.borderStrong : color.border}`,
+          borderRadius: radius.md,
+          color: open || hovered ? color.text : '#888888',
+          cursor: 'pointer', padding: 0, transition: transition.quick,
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M12 2l2 2-7.5 7.5H4.5v-2L12 2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+          <path d="M10 4l2 2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <path d="M3 12.5c-.5 1-1 1.5-1.5 1.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <circle cx="3" cy="13" r="1" fill="currentColor"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          style={{
+            position: 'fixed', zIndex: 300,
+            top: pos.top, left: pos.left,
+            background: color.surfaceRaised,
+            border: `1px solid ${color.borderStrong}`,
+            borderRadius: radius.lg, padding: 12,
+            display: 'flex', flexDirection: 'column', gap: 10,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.7)', width: 190,
+          }}
+        >
+          <input
+            type="color"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ width: '100%', height: 34, border: 'none', padding: 0, cursor: 'crosshair', borderRadius: radius.md, background: 'none' }}
+          />
+          <input
+            value={draft}
+            maxLength={7}
+            onChange={(e) => {
+              const v = e.target.value.startsWith('#') ? e.target.value : '#' + e.target.value;
+              if (/^#[0-9a-fA-F]{0,6}$/.test(v)) setDraft(v);
+            }}
+            style={{
+              height: 30, padding: '0 10px',
+              background: color.surface, border: `1px solid ${color.border}`,
+              borderRadius: radius.md, color: color.text,
+              fontSize: font.sizeSm, fontFamily: font.mono, outline: 'none',
+            }}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => setOpen(false)}
+              style={{
+                flex: 1, height: 28, border: `1px solid ${color.border}`,
+                background: color.surface, borderRadius: radius.md, cursor: 'pointer',
+                color: color.textMuted, fontSize: font.sizeSm,
+              }}
+            >Cancel</button>
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={handleApply}
+              style={{
+                flex: 2, height: 28, border: 'none',
+                background: color.white, borderRadius: radius.md, cursor: 'pointer',
+                color: '#000', fontSize: font.sizeSm, fontWeight: font.weightMedium,
+              }}
+            >Apply</button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+interface RgbFieldsProps {
+  rgb: number[];
+  onChange: (rgb: number[]) => void;
+  onCommit: () => void;
+  onFocus?: () => void;
+}
+
+export const RgbFields: React.FC<RgbFieldsProps> = ({ rgb, onChange, onCommit, onFocus }) => {
+  const clamp = (n: number) => Math.min(255, Math.max(0, n));
+
+  const [vals, setVals] = useState([
+    String(clamp(rgb[0] ?? 0)),
+    String(clamp(rgb[1] ?? 0)),
+    String(clamp(rgb[2] ?? 0)),
+  ]);
+
+  const rgbKey = `${rgb[0]}-${rgb[1]}-${rgb[2]}`;
+  useEffect(() => {
+    setVals([
+      String(clamp(rgb[0] ?? 0)),
+      String(clamp(rgb[1] ?? 0)),
+      String(clamp(rgb[2] ?? 0)),
+    ]);
+  }, [rgbKey]);
+
+  const handleChange = (idx: number, val: string) => {
+    const next = [...vals];
+    next[idx] = val;
+    setVals(next);
+    const nums = next.map(v => { const n = parseInt(v, 10); return isNaN(n) ? null : clamp(n); });
+    if (nums.every(n => n !== null)) onChange(nums as number[]);
+  };
+
+  const handleBlur = () => {
+    const nums = vals.map(v => { const n = parseInt(v, 10); return isNaN(n) ? 0 : clamp(n); });
+    setVals(nums.map(String));
+    onChange(nums);
+    onCommit();
+  };
+
+  const fieldStyle: CSSProperties = {
+    width: 42, height: size.inputHeightSm,
+    padding: '0 4px', textAlign: 'center',
+    background: color.surface,
+    border: `1px solid ${color.border}`,
+    borderRadius: radius.md,
+    color: color.text, fontSize: font.sizeSm, fontFamily: font.mono,
+    outline: 'none', transition: transition.quick,
+  };
+
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+      {(['R', 'G', 'B'] as const).map((label, i) => (
+        <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ fontSize: 11, color: color.textFaint, fontFamily: font.mono, lineHeight: 1, userSelect: 'none' }}>{label}</span>
+          <input
+            value={vals[i]}
+            maxLength={3}
+            onChange={(e) => handleChange(i, e.target.value)}
+            onFocus={onFocus}
+            onBlur={handleBlur}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleBlur(); e.stopPropagation(); }}
+            onClick={(e) => e.stopPropagation()}
+            style={fieldStyle}
+          />
+        </div>
+      ))}
+    </div>
+  );
+};
+
+interface UnsavedBarProps {
+  count: number;
+  noun: string;
+  onDiscard?: () => void;
+}
+
+export const UnsavedBar: React.FC<UnsavedBarProps> = ({ count, noun, onDiscard }) => {
+  if (count === 0) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: `0 ${space.xl}px`, height: 34, flexShrink: 0,
+      background: `${color.unsaved}0B`,
+      borderBottom: `1px solid ${color.unsaved}28`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ width: 6, height: 6, borderRadius: '50%', background: color.unsaved, flexShrink: 0 }} />
+        <span style={{ fontSize: font.sizeXs, color: color.unsaved, fontWeight: font.weightMedium }}>
+          {count} unsaved {noun}{count !== 1 ? 's' : ''}
+        </span>
+      </div>
+      {onDiscard && (
+        <button
+          onClick={onDiscard}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: font.sizeXs, color: color.textFaint, padding: '2px 8px',
+            borderRadius: radius.sm, transition: transition.quick,
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = color.textMuted)}
+          onMouseLeave={(e) => (e.currentTarget.style.color = color.textFaint)}
+        >
+          Discard
+        </button>
+      )}
+    </div>
+  );
+};

@@ -1,5 +1,6 @@
 export type TabName = 'colorEditor' | 'sharedColors' | 'rawText';
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
+export type ColorDisplayMode = 'hex' | 'rgb';
 
 export interface ColorField {
   fieldName: string;
@@ -33,10 +34,17 @@ export interface SharedColorGroup {
   fieldNames: string[];
 }
 
+export interface ColorPalette {
+  id: string;
+  name: string;
+  colors: string[];
+}
+
 export interface AppConfig {
   folderPath: string | null;
-  savedColors: string[];
+  palettes: ColorPalette[];
   colorMatchThreshold: number;
+  colorDisplayMode: ColorDisplayMode;
 }
 
 export interface Toast {
@@ -55,4 +63,19 @@ export interface FileEditorState {
   fields: ColorField[];
   pendingChanges: Record<number, PendingColorChange>;
   originalColors: Record<number, number[]>;
+}
+
+export type HistoryAction =
+  | 'edit' | 'revert' | 'save' | 'save_all'
+  | 'apply_shared' | 'undo' | 'redo';
+
+export interface HistoryEntry {
+  id: string;
+  timestamp: number;
+  action: HistoryAction;
+  filename?: string;
+  fieldName?: string;
+  oldHex?: string;
+  newHex?: string;
+  description: string;
 }

@@ -29,30 +29,32 @@ export const RawTextTab: React.FC = () => {
   const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set());
   const [isBatchRunning, setIsBatchRunning] = useState(false);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef  = useRef<HTMLTextAreaElement>(null);
+  const undoStack    = useRef<string[]>([]);
+  const redoStack    = useRef<string[]>([]);
+  const prevFilename = useRef<string | null>(null);
 
   const currentIndex = filteredFiles.findIndex(f => f.filename === selectedFilename);
   const totalCount   = filteredFiles.length;
 
   useEffect(() => {
     if (!selectedFilename) return;
+    undoStack.current  = [];
+    redoStack.current  = [];
+    prevFilename.current = selectedFilename;
     setIsLoading(true);
     setIsDirty(false);
     setSearchQuery('');
     setMatchPositions([]);
     setMatchCount(0);
     tauriCommands.readFileContent(selectedFilename)
-      .then((content) => { setEditorContent(content); })
+      .then((content) => { setEditorContent(content); undoStack.current = [content]; })
       .catch(() => pushToast('error', 'Failed to load file content'))
       .finally(() => setIsLoading(false));
   }, [selectedFilename]);
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setMatchPositions([]);
-      setMatchCount(0);
-      return;
-    }
+    if (!searchQuery.trim()) { setMatchPositions([]); setMatchCount(0); return; }
     const positions: number[] = [];
     const lower   = editorContent.toLowerCase();
     const pattern = searchQuery.toLowerCase();
@@ -93,7 +95,7 @@ export const RawTextTab: React.FC = () => {
 
   const handleReplace = useCallback(() => {
     if (!searchQuery.trim() || matchPositions.length === 0) return;
-    const pos     = matchPositions[activeMatchIndex];
+    const pos = matchPositions[activeMatchIndex];
     if (pos === undefined) return;
     const updated = editorContent.slice(0, pos) + replaceValue + editorContent.slice(pos + searchQuery.length);
     setEditorContent(updated);
@@ -106,6 +108,17 @@ export const RawTextTab: React.FC = () => {
     setEditorContent(updated);
     setIsDirty(true);
   }, [searchQuery, replaceValue, editorContent]);
+
+  const pushUndo = useCallback((snapshot: string) => {
+    undoStack.current = [...undoStack.current.slice(-49), snapshot];
+    redoStack.current = [];
+  }, []);
+
+  const handleTextChange = useCallback((newVal: string) => {
+    pushUndo(editorContent);
+    setEditorContent(newVal);
+    setIsDirty(true);
+  }, [editorContent, pushUndo]);
 
   const handleSave = useCallback(async () => {
     if (!selectedFilename || !isDirty) return;
@@ -120,22 +133,40 @@ export const RawTextTab: React.FC = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [selectedFilename, editorContent, isDirty]);
+  }, [selectedFilename, editorContent, isDirty, updateFileFields, pushToast]);
 
   const handleSaveRef = useRef(handleSave);
   handleSaveRef.current = handleSave;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
+      const target  = e.target as HTMLElement;
       const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
       if (e.ctrlKey && e.key === 's') { e.preventDefault(); handleSaveRef.current(); }
+      if (e.ctrlKey && !e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        if (undoStack.current.length <= 1) return;
+        const prev = undoStack.current[undoStack.current.length - 2];
+        redoStack.current = [...redoStack.current.slice(-49), editorContent];
+        undoStack.current = undoStack.current.slice(0, -1);
+        setEditorContent(prev);
+        setIsDirty(true);
+      }
+      if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) {
+        e.preventDefault();
+        if (redoStack.current.length === 0) return;
+        const next = redoStack.current[redoStack.current.length - 1];
+        undoStack.current = [...undoStack.current.slice(-49), editorContent];
+        redoStack.current = redoStack.current.slice(0, -1);
+        setEditorContent(next);
+        setIsDirty(true);
+      }
       if (!inInput && e.key === 'ArrowDown') { e.preventDefault(); navigateFile(1); }
       if (!inInput && e.key === 'ArrowUp')   { e.preventDefault(); navigateFile(-1); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [navigateFile]);
+  }, [navigateFile, editorContent]);
 
   const getTargetFilenames = useCallback((): string[] => {
     if (batchTargetAll) return loadedFiles.map(f => f.filename);
@@ -155,12 +186,7 @@ export const RawTextTab: React.FC = () => {
         const newContent = rawContent.split(batchSearch).join(batchReplace);
         const result     = await tauriCommands.saveRawText(filename, newContent);
         updateFileFields(filename, result.fields);
-        if (filename === selectedFilename) {
-          setEditorContent(newContent);
-          setIsDirty(false);
-          setMatchPositions([]);
-          setMatchCount(0);
-        }
+        if (filename === selectedFilename) { setEditorContent(newContent); setIsDirty(false); setMatchPositions([]); setMatchCount(0); }
         updatedCount++;
       }
       pushToast('success', `Replaced in ${updatedCount} file${updatedCount !== 1 ? 's' : ''}`);
@@ -169,7 +195,7 @@ export const RawTextTab: React.FC = () => {
     } finally {
       setIsBatchRunning(false);
     }
-  }, [batchSearch, batchReplace, getTargetFilenames, selectedFilename]);
+  }, [batchSearch, batchReplace, getTargetFilenames, selectedFilename, updateFileFields, pushToast]);
 
   const handleBatchFirstLine = useCallback(async () => {
     if (!batchNewFirstLine.trim()) { pushToast('warning', 'New first line is empty'); return; }
@@ -180,10 +206,10 @@ export const RawTextTab: React.FC = () => {
     try {
       for (const filename of targets) {
         const rawContent = await tauriCommands.readFileContent(filename);
-        const lines      = rawContent.split('\n');
-        lines[0]         = batchNewFirstLine;
+        const lines  = rawContent.split('\n');
+        lines[0]     = batchNewFirstLine;
         const newContent = lines.join('\n');
-        const result     = await tauriCommands.saveRawText(filename, newContent);
+        const result = await tauriCommands.saveRawText(filename, newContent);
         updateFileFields(filename, result.fields);
         if (filename === selectedFilename) { setEditorContent(newContent); setIsDirty(false); }
         updatedCount++;
@@ -194,7 +220,7 @@ export const RawTextTab: React.FC = () => {
     } finally {
       setIsBatchRunning(false);
     }
-  }, [batchNewFirstLine, getTargetFilenames, selectedFilename]);
+  }, [batchNewFirstLine, getTargetFilenames, selectedFilename, updateFileFields, pushToast]);
 
   const toggleBatchFile = useCallback((filename: string) => {
     setBatchSelectedFiles((prev) => {
@@ -222,8 +248,7 @@ export const RawTextTab: React.FC = () => {
       <div style={{
         padding: `${space.sm}px ${space.xl}px`,
         display: 'flex', alignItems: 'center', gap: space.md,
-        flexShrink: 0, borderBottom: `1px solid ${color.border}`,
-        minHeight: 52,
+        flexShrink: 0, borderBottom: `1px solid ${color.border}`, minHeight: 52,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: space.sm, flex: 1, minWidth: 0 }}>
           <Input
@@ -242,8 +267,7 @@ export const RawTextTab: React.FC = () => {
                 style={{
                   height: size.inputHeightSm, width: 200, padding: '0 12px',
                   background: color.surfaceActive, border: `1px solid ${color.border}`,
-                  borderRadius: radius.md, color: color.text, fontSize: font.sizeSm,
-                  fontFamily: font.sans,
+                  borderRadius: radius.md, color: color.text, fontSize: font.sizeSm, fontFamily: font.sans,
                 }}
               />
               <span style={{ fontSize: font.sizeSm, color: color.textFaint, whiteSpace: 'nowrap', flexShrink: 0 }}>
@@ -383,7 +407,7 @@ export const RawTextTab: React.FC = () => {
           <textarea
             ref={textareaRef}
             value={editorContent}
-            onChange={(e) => { setEditorContent(e.target.value); setIsDirty(true); }}
+            onChange={(e) => handleTextChange(e.target.value)}
             spellCheck={false}
             style={{
               width: '100%', height: '100%',
@@ -391,6 +415,9 @@ export const RawTextTab: React.FC = () => {
               background: color.background, border: 'none',
               color: color.text, fontFamily: font.mono,
               fontSize: font.sizeSm, lineHeight: 1.7, overflowY: 'auto',
+              outline: isDirty ? `2px solid ${color.unsaved}` : 'none',
+              outlineOffset: -2,
+              resize: 'none',
             }}
           />
         )}
@@ -402,7 +429,7 @@ export const RawTextTab: React.FC = () => {
         gap: space.md, height: size.bottomBarHeight,
       }}>
         <Button variant="primary" height={size.buttonMd} width={172} onClick={handleSave} disabled={!isDirty || isSaving}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
             <path d="M2 2h8l2 2v8H2V2z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
             <path d="M4 2v3h6V2" stroke="currentColor" strokeWidth="1.3"/>
             <path d="M4 8h6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
@@ -413,9 +440,7 @@ export const RawTextTab: React.FC = () => {
           {isDirty ? 'Unsaved changes' : 'No unsaved changes'}
         </span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: font.sizeXs, color: color.textFaint, fontFamily: font.mono }}>
-          {selectedFilename}
-        </span>
+        <span style={{ fontSize: font.sizeXs, color: color.textFaint, fontFamily: font.mono }}>{selectedFilename}</span>
       </div>
     </div>
   );
